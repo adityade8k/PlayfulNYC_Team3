@@ -5,6 +5,7 @@ import { createFloatingCube } from './components/cube/index.js'
 import { createControllerSystem } from './components/controller/index.js'
 import { createHandTrackingSystem } from './components/handtracking/index.js'
 import { createPlayerSystem } from './components/players/index.js'
+import { createSmartWatchComponent } from './components/smart-watch/index.js'
 import {
   connectMultiplayer,
   broadcastGlobal,
@@ -111,6 +112,12 @@ const handTrackingSystem = createHandTrackingSystem(
   interactiveObjects
 )
 const playerSystem = createPlayerSystem(scene)
+const smartWatch = createSmartWatchComponent({ scene, camera, renderer })
+
+window.render_game_to_text = smartWatch.renderGameToText
+arButton.addEventListener('click', () => {
+  smartWatch.maybeAutoStart()
+})
 
 const activeSources = new Set()
 const lastHoveredCubeBySource = new Map()
@@ -235,6 +242,7 @@ handTrackingSystem.events.addEventListener('pinchend', (event) =>
 renderer.xr.addEventListener('sessionstart', () => {
   isInAr = true
   hasAppliedSpawnReferenceSpace = false
+  smartWatch.maybeAutoStart()
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -272,6 +280,7 @@ renderer.setAnimationLoop(() => {
   timer.update()
   const deltaSeconds = timer.getDelta()
   elapsedSeconds += deltaSeconds
+  const elapsedMilliseconds = elapsedSeconds * 1000
   const networkState = synchronize('sharedState') || sharedState
   const snapshot = getSnapshot()
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -326,6 +335,7 @@ renderer.setAnimationLoop(() => {
   controllerSystem.update()
   handTrackingSystem.update()
   playerNeedsSession.update(deltaSeconds)
+  smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
   renderer.render(scene, camera)
 })
 
