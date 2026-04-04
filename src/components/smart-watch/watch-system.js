@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { NEEDS_CONFIG, getWatchClockFromElapsed } from '../needs/index.js'
 import { attachSmartWatchGlobals, createSmartWatchStore } from './state.js'
 import {
   createLandlordCallController,
@@ -130,8 +131,14 @@ export const createSmartWatchXRSystem = ({
   const tempPosition = new THREE.Vector3()
   const tempQuaternion = new THREE.Quaternion()
   let elapsedMs = 0
+  let watchClock = getWatchClockFromElapsed(0, NEEDS_CONFIG)
   let lastState = store.getState()
   let lastTracking = 'desktop-preview'
+
+  const renderWatchScreen = () => {
+    watchScreen.render(lastState, elapsedMs, watchClock)
+    screenTexture.needsUpdate = true
+  }
 
   const landlordCall = createLandlordCallController(store, {
     endpoint,
@@ -146,8 +153,7 @@ export const createSmartWatchXRSystem = ({
 
   store.subscribe((state) => {
     lastState = state
-    watchScreen.render(state, elapsedMs)
-    screenTexture.needsUpdate = true
+    renderWatchScreen()
     onStatus(describeWatchStatus(state))
   })
 
@@ -256,6 +262,9 @@ export const createSmartWatchXRSystem = ({
     startIntro() {
       return landlordCall.startCall()
     },
+    startOutcomeCall(summaries = []) {
+      return landlordCall.startOutcomeCall({ summaries })
+    },
     setPlayerId(nextPlayerId) {
       store.bindPlayerNeeds(nextPlayerId)
     },
@@ -264,8 +273,10 @@ export const createSmartWatchXRSystem = ({
     },
     update(time, frame) {
       elapsedMs = time
-      watchScreen.render(lastState, elapsedMs)
-      screenTexture.needsUpdate = true
+      const sessionState = playerNeedsSession?.getState?.()
+      const elapsedSessionSeconds = Number(sessionState?.elapsed) || 0
+      watchClock = getWatchClockFromElapsed(elapsedSessionSeconds, NEEDS_CONFIG)
+      renderWatchScreen()
       screenMesh.material.emissiveIntensity =
         lastState.screen === 'incoming-call' ? 0.62 : 0.48
       return updateAnchor(frame)

@@ -6,7 +6,7 @@ export const createWatchScreenCanvas = () => {
   canvas.height = 1024
   const context = canvas.getContext('2d')
 
-  const render = (state, elapsedMs = 0) => {
+  const render = (state, elapsedMs = 0, watchClock = null) => {
     context.clearRect(0, 0, canvas.width, canvas.height)
 
     const background = context.createLinearGradient(0, 0, canvas.width, canvas.height)
@@ -29,7 +29,7 @@ export const createWatchScreenCanvas = () => {
     context.fillStyle = vignette
     context.fillRect(0, 0, canvas.width, canvas.height)
 
-    drawStatusLine(context)
+    drawStatusLine(context, watchClock)
     if (state.screen === 'incoming-call') {
       drawIncomingCall(context, state, elapsedMs)
     } else {
@@ -48,7 +48,7 @@ export const createLandlordCallController = (
     onStatus = () => {},
   } = {}
 ) => {
-  const audio = new Audio(endpoint)
+  const audio = new Audio()
   audio.preload = 'auto'
   audio.playsInline = true
   audio.crossOrigin = 'anonymous'
@@ -56,6 +56,7 @@ export const createLandlordCallController = (
   let startPromise = null
   let primed = false
   let audioUnlocked = false
+  let activeObjectUrl = null
 
   const logAudio = (message, extra = null) => {
     if (extra) {
@@ -72,12 +73,24 @@ export const createLandlordCallController = (
     }
   }
 
+  const revokeObjectUrl = () => {
+    if (!activeObjectUrl) return
+    URL.revokeObjectURL(activeObjectUrl)
+    activeObjectUrl = null
+  }
+
+  const setAudioSource = (sourceUrl) => {
+    if (audio.src === sourceUrl) return
+    audio.src = sourceUrl
+    audio.load()
+  }
+
   const advanceToStats = () => {
     clearTimer()
     logAudio('landlord call finished, switching to stats')
     store.setCallState({ speaking: false, finished: true })
     store.setScreen('stats')
-    onStatus('Landlord intro finished. Stats screen is live.')
+    onStatus('Landlord call finished.')
   }
 
   const setError = (message) => {
@@ -97,7 +110,7 @@ export const createLandlordCallController = (
   }
 
   audio.addEventListener('loadstart', () => {
-    logAudio('loadstart', { src: endpoint })
+    logAudio('loadstart', { src: audio.src })
   })
   audio.addEventListener('loadedmetadata', () => {
     logAudio('loadedmetadata', { duration: audio.duration })
@@ -131,7 +144,7 @@ export const createLandlordCallController = (
     if (primed) return
     primed = true
     logAudio('priming audio', { endpoint })
-    audio.load()
+    setAudioSource(endpoint)
     fetch(endpoint, { cache: 'force-cache' })
       .then((response) => {
         logAudio('prefetch response', {
@@ -147,36 +160,7 @@ export const createLandlordCallController = (
       })
   }
 
-  const unlockAudio = async () => {
-    primeAudio()
-    if (audioUnlocked) {
-      logAudio('unlockAudio skipped, already unlocked')
-      return true
-    }
-
-    const previousMuted = audio.muted
-    try {
-      audio.muted = true
-      audio.currentTime = 0
-      logAudio('unlockAudio attempting silent play')
-      await audio.play()
-      audio.pause()
-      audio.currentTime = 0
-      audioUnlocked = true
-      logAudio('unlockAudio succeeded')
-      return true
-    } catch (error) {
-      logAudio('unlockAudio failed', {
-        message: error instanceof Error ? error.message : String(error),
-      })
-      return false
-    } finally {
-      audio.muted = previousMuted
-    }
-  }
-
-  const startCall = async () => {
-    primeAudio()
+  const playFromCurrentSource = async () => {
     clearTimer()
     if (startPromise) return startPromise
     audio.pause()
@@ -224,15 +208,82 @@ export const createLandlordCallController = (
     return startPromise
   }
 
+  const unlockAudio = async () => {
+    primeAudio()
+    if (audioUnlocked) {
+      logAudio('unlockAudio skipped, already unlocked')
+      return true
+    }
+
+    const previousMuted = audio.muted
+    try {
+      audio.muted = true
+      audio.currentTime = 0
+      logAudio('unlockAudio attempting silent play')
+      await audio.play()
+      audio.pause()
+      audio.currentTime = 0
+      audioUnlocked = true
+      logAudio('unlockAudio succeeded')
+      return true
+    } catch (error) {
+      logAudio('unlockAudio failed', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    } finally {
+      audio.muted = previousMuted
+    }
+  }
+
+  const startCall = async () => {
+    primeAudio()
+    revokeObjectUrl()
+    setAudioSource(endpoint)
+    return playFromCurrentSource()
+  }
+
+  const startOutcomeCall = async (payload = {}) => {
+    clearTimer()
+    revokeObjectUrl()
+    let response
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? `Landlord follow-up call failed: ${error.message}`
+          : 'Landlord follow-up call failed.'
+      )
+      return Promise.resolve()
+    }
+
+    if (!response.ok) {
+      setError(`Landlord follow-up call failed (${response.status}).`)
+      return Promise.resolve()
+    }
+
+    const blob = await response.blob()
+    activeObjectUrl = URL.createObjectURL(blob)
+    setAudioSource(activeObjectUrl)
+    return playFromCurrentSource()
+  }
+
   return {
     primeAudio,
     unlockAudio,
     startCall,
+    startOutcomeCall,
     replayCall: startCall,
     skipToStats: advanceToStats,
     dispose() {
       clearTimer()
       audio.pause()
+      revokeObjectUrl()
     },
   }
 }
@@ -249,13 +300,19 @@ export const describeWatchStatus = (state) => {
   return 'Stats are live on the watch and can be updated globally.'
 }
 
-const drawStatusLine = (context) => {
+const drawStatusLine = (context, watchClock = null) => {
   context.textAlign = 'left'
   const now = new Date()
-  const timeLabel = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  const dayLabel = now
-    .toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
-    .toUpperCase()
+  const timeLabel =
+    typeof watchClock?.timeLabel === 'string'
+      ? watchClock.timeLabel
+      : now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const dayLabel =
+    typeof watchClock?.dayLabel === 'string'
+      ? watchClock.dayLabel
+      : now
+          .toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+          .toUpperCase()
 
   context.fillStyle = 'rgba(255,255,255,0.92)'
   context.font = '600 56px "Avenir Next", sans-serif'

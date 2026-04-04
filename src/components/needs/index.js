@@ -9,7 +9,12 @@
 // Tweak DECAY_RATES and FILL_RATES to change game feel.
 
 export const NEEDS_CONFIG = {
-  gameDuration: 600,        // seconds (10 min default — change freely)
+  gameDuration: 240,        // seconds (10 min default — change freely)
+  // Real seconds needed for 1 watch-second to pass.
+  // 0.1 means watch time runs ~10x faster than real time.
+  watchSecondRealSeconds: 0.1,
+  // Optional watch start hour (24h format).
+  watchStartHour24: 8,
 
   // How fast each bar drains per second (0–100 scale)
   decayRates: {
@@ -33,6 +38,43 @@ export const NEEDS_CONFIG = {
     green:  60,   // above this = green
     yellow: 30,   // above this = yellow, below = red
   },
+}
+
+const toPositiveNumber = (value, fallback) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const formatHourMinute = (hour24, minute) => {
+  const period = hour24 >= 12 ? 'PM' : 'AM'
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12
+  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`
+}
+
+export const getWatchClockFromElapsed = (
+  elapsedRealSeconds = 0,
+  config = NEEDS_CONFIG
+) => {
+  const watchSecondRealSeconds = toPositiveNumber(config.watchSecondRealSeconds, 0.1)
+  const startHour24 = Math.max(
+    0,
+    Math.min(23, Math.floor(toPositiveNumber(config.watchStartHour24, 8)))
+  )
+
+  const watchElapsedSeconds = Math.max(0, elapsedRealSeconds) / watchSecondRealSeconds
+  const totalWatchSeconds = startHour24 * 3600 + watchElapsedSeconds
+  const dayNumber = Math.floor(totalWatchSeconds / 86400) + 1
+  const secondsOfDay = totalWatchSeconds % 86400
+  const hour24 = Math.floor(secondsOfDay / 3600)
+  const minute = Math.floor((secondsOfDay % 3600) / 60)
+
+  return {
+    dayNumber,
+    hour24,
+    minute,
+    timeLabel: formatHourMinute(hour24, minute),
+    dayLabel: `DAY ${dayNumber}`,
+  }
 }
 
 // ── Shame event messages ──────────────────────────────────────

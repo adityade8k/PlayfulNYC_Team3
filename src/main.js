@@ -85,6 +85,11 @@ sharedSceneGroup.add(floor)
 const playerNeedsSession = new PlayerNeedsSession()
 playerNeedsSession.addPlayer('player_1')
 playerNeedsSession.addPlayer('player_2')
+playerNeedsSession.onSessionEnd = (summaries) => {
+  console.log('[needs] session ended, starting landlord verdict call', summaries)
+  if (!smartWatch) return
+  void smartWatch.startOutcomeCall(summaries)
+}
 
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
