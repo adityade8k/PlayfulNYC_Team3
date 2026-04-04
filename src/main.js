@@ -22,6 +22,14 @@ import {
 import { PlayerNeedsSession } from './components/needs/index.js'
 import { ZoneSystem } from './components/needs/zones.js'
 
+const getNeedsPlayerIdForSnapshot = (snapshot) => {
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  if (!selfPlayer) return null
+  if (selfPlayer.slotIndex === 0) return 'player_1'
+  if (selfPlayer.slotIndex === 1) return 'player_2'
+  return null
+}
+
 const sharedState = createDefaultSharedState()
 
 setGlobal('sharedState', sharedState)
@@ -115,7 +123,12 @@ const handTrackingSystem = createHandTrackingSystem(
   interactiveObjects
 )
 const playerSystem = createPlayerSystem(scene)
-const smartWatch = createSmartWatchComponent({ scene, camera, renderer })
+const smartWatch = createSmartWatchComponent({
+  scene,
+  camera,
+  renderer,
+  playerNeedsSession,
+})
 
 window.render_game_to_text = smartWatch.renderGameToText
 arButton.addEventListener('click', () => {
@@ -335,6 +348,7 @@ renderer.setAnimationLoop(() => {
     isInAr ? localBodyRotationY : null,
     deltaSeconds
   )
+  smartWatch.setPlayerId(getNeedsPlayerIdForSnapshot(snapshot))
   controllerSystem.update()
   handTrackingSystem.update()
   smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
