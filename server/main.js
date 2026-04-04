@@ -32,7 +32,10 @@ const certPath = process.env.HTTPS_CERT_PATH || process.env.SSL_CERT_PATH
 const app = express()
 
 registerLandlordCallRoute(app, {
-  envFiles: [path.resolve(projectRoot, '.env.local')],
+  envFiles: [
+    path.resolve(projectRoot, 'server/smart-watch/.env.local'),
+    path.resolve(projectRoot, '.env.local'),
+  ],
 })
 
 if (fs.existsSync(distDir)) {

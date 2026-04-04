@@ -10,6 +10,8 @@ export const createSmartWatchXRSystem = ({
   scene,
   camera,
   renderer,
+  playerNeedsSession = null,
+  playerId = null,
   endpoint = '/api/landlord-call',
   autoStart = false,
   secureContextMessage = true,
@@ -19,7 +21,7 @@ export const createSmartWatchXRSystem = ({
     throw new Error('createSmartWatchXRSystem requires scene, camera, and renderer.')
   }
 
-  const store = createSmartWatchStore()
+  const store = createSmartWatchStore(playerNeedsSession, playerId)
   attachSmartWatchGlobals(store)
 
   const watchScreen = createWatchScreenCanvas()
@@ -248,8 +250,14 @@ export const createSmartWatchXRSystem = ({
 
   return {
     store,
+    unlockAudio() {
+      return landlordCall.unlockAudio()
+    },
     startIntro() {
       return landlordCall.startCall()
+    },
+    setPlayerId(nextPlayerId) {
+      store.bindPlayerNeeds(nextPlayerId)
     },
     maybeAutoStart() {
       void landlordCall.startCall()
@@ -265,6 +273,7 @@ export const createSmartWatchXRSystem = ({
     renderGameToText,
     dispose() {
       landlordCall.dispose()
+      store.dispose?.()
       scene.remove(watchAnchor)
       camera.remove(desktopPreviewAnchor)
     },

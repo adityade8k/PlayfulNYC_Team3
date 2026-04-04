@@ -39,8 +39,19 @@ export function createControllerSystem(renderer, scene, interactiveObjects = [])
     const controller = renderer.xr.getController(index)
     controller.add(createRay(0x66ccff))
     controller.userData.controllerIndex = index
+    controller.userData.handedness = null
+    controller.userData.connected = false
     scene.add(controller)
     controllers.push(controller)
+
+    controller.addEventListener('connected', (event) => {
+      controller.userData.connected = true
+      controller.userData.handedness = event.data?.handedness || null
+    })
+    controller.addEventListener('disconnected', () => {
+      controller.userData.connected = false
+      controller.userData.handedness = null
+    })
 
     controller.addEventListener('select', () => {
       const intersections = intersectFromInput(raycaster, controller, interactiveObjects)

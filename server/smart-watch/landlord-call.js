@@ -19,12 +19,33 @@ export const registerLandlordCallRoute = (
   } = {}
 ) => {
   for (const envFile of envFiles) loadEnvFile(envFile)
+  const resolvedModelId = process.env.ELEVENLABS_MODEL_ID || modelId
 
   let audioBuffer = null
   let inflight = null
+  const allowOrigin = process.env.LANDLORD_CALL_ALLOW_ORIGIN?.trim() || null
+  const requestTimeoutMs = toPositiveInteger(
+    process.env.LANDLORD_CALL_REQUEST_TIMEOUT_MS,
+    15000
+  )
+
+  const applyCorsHeaders = (res) => {
+    if (allowOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowOrigin)
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range')
+      res.setHeader('Vary', 'Origin')
+    }
+  }
+
+  app.options(routePath, (_req, res) => {
+    applyCorsHeaders(res)
+    res.status(204).end()
+  })
 
   app.get(routePath, async (_req, res) => {
     try {
+      applyCorsHeaders(res)
       if (audioBuffer) {
         res.setHeader('Content-Type', 'audio/mpeg')
         res.setHeader('Cache-Control', 'public, max-age=86400')
@@ -33,7 +54,11 @@ export const registerLandlordCallRoute = (
       }
 
       if (!inflight) {
-        inflight = synthesizeLandlordAudio({ script, modelId })
+        inflight = synthesizeLandlordAudio({
+          script,
+          modelId: resolvedModelId,
+          timeoutMs: requestTimeoutMs,
+        })
           .then((buffer) => {
             audioBuffer = buffer
             return buffer
@@ -48,11 +73,14 @@ export const registerLandlordCallRoute = (
       res.setHeader('Cache-Control', 'public, max-age=86400')
       res.send(audio)
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to synthesize landlord onboarding audio.'
+      console.error('[smart-watch][landlord-call] request failed:', message)
+      applyCorsHeaders(res)
       res.status(500).json({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to synthesize landlord onboarding audio.',
+        error: 'Unable to generate landlord onboarding audio right now.',
       })
     }
   })
@@ -83,7 +111,7 @@ const loadEnvFile = (filePath) => {
   }
 }
 
-const synthesizeLandlordAudio = async ({ script, modelId }) => {
+const synthesizeLandlordAudio = async ({ script, modelId, timeoutMs }) => {
   const apiKey = process.env.ELEVENLABS_API_KEY
   const configuredVoiceId = process.env.ELEVENLABS_VOICE_ID
 
@@ -96,19 +124,21 @@ const synthesizeLandlordAudio = async ({ script, modelId }) => {
     voiceId: configuredVoiceId,
     script,
     modelId,
+    timeoutMs,
   })
 
   if (primary.ok) return Buffer.from(await primary.arrayBuffer())
 
   const primaryMessage = await primary.text()
   if (primary.status === 402 && primaryMessage.includes('paid_plan_required')) {
-    const fallbacks = await getFallbackVoiceIds(apiKey, configuredVoiceId)
+    const fallbacks = await getFallbackVoiceIds(apiKey, configuredVoiceId, timeoutMs)
     for (const fallbackVoiceId of fallbacks) {
       const fallback = await requestSpeech({
         apiKey,
         voiceId: fallbackVoiceId,
         script,
         modelId,
+        timeoutMs,
       })
       if (fallback.ok) return Buffer.from(await fallback.arrayBuffer())
     }
@@ -122,32 +152,47 @@ const synthesizeLandlordAudio = async ({ script, modelId }) => {
   )
 }
 
-const requestSpeech = ({ apiKey, voiceId, script, modelId }) =>
-  fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
-    method: 'POST',
-    headers: {
-      Accept: 'audio/mpeg',
-      'Content-Type': 'application/json',
-      'xi-api-key': apiKey,
-    },
-    body: JSON.stringify({
-      text: script,
-      model_id: modelId,
-      voice_settings: {
-        stability: 0.45,
-        similarity_boost: 0.8,
-        use_speaker_boost: true,
+const requestSpeech = ({ apiKey, voiceId, script, modelId, timeoutMs }) =>
+  fetchWithTimeout(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'audio/mpeg',
+        'Content-Type': 'application/json',
+        'xi-api-key': apiKey,
       },
-    }),
-  })
-
-const getFallbackVoiceIds = async (apiKey, excludedVoiceId) => {
-  const response = await fetch('https://api.elevenlabs.io/v1/voices', {
-    headers: {
-      Accept: 'application/json',
-      'xi-api-key': apiKey,
+      body: JSON.stringify({
+        text: script,
+        model_id: modelId,
+        voice_settings: {
+          stability: 0.45,
+          similarity_boost: 0.8,
+          use_speaker_boost: true,
+        },
+      }),
     },
-  })
+    timeoutMs,
+    `ElevenLabs speech request for voice ${voiceId}`
+  )
+
+const getFallbackVoiceIds = async (apiKey, excludedVoiceId, timeoutMs) => {
+  let response
+  try {
+    response = await fetchWithTimeout(
+      'https://api.elevenlabs.io/v1/voices',
+      {
+        headers: {
+          Accept: 'application/json',
+          'xi-api-key': apiKey,
+        },
+      },
+      timeoutMs,
+      'ElevenLabs voice list request'
+    )
+  } catch {
+    return KNOWN_FALLBACKS.filter((voiceId) => voiceId !== excludedVoiceId)
+  }
 
   if (!response.ok) {
     return KNOWN_FALLBACKS.filter((voiceId) => voiceId !== excludedVoiceId)
@@ -172,4 +217,25 @@ const getFallbackVoiceIds = async (apiKey, excludedVoiceId) => {
   return [...new Set([...preferred, ...alternates, ...KNOWN_FALLBACKS])].filter(
     (voiceId) => voiceId !== excludedVoiceId
   )
+}
+
+const fetchWithTimeout = async (url, options, timeoutMs, context) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`${context} timed out after ${timeoutMs}ms.`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const toPositiveInteger = (rawValue, fallback) => {
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.floor(parsed)
 }

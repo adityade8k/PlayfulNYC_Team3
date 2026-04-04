@@ -21,6 +21,15 @@ import {
 } from '../shared/default-state.js'
 import { PlayerNeedsSession } from './components/needs/index.js'
 import { ZoneSystem } from './components/needs/zones.js'
+import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
+
+const getNeedsPlayerIdForSnapshot = (snapshot) => {
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  if (!selfPlayer) return null
+  if (selfPlayer.slotIndex === 0) return 'player_1'
+  if (selfPlayer.slotIndex === 1) return 'player_2'
+  return null
+}
 
 const sharedState = createDefaultSharedState()
 
@@ -28,6 +37,10 @@ setGlobal('sharedState', sharedState)
 connectMultiplayer()
 
 const scene = new THREE.Scene()
+const sharedSceneGroup = new THREE.Group()
+sharedSceneGroup.name = 'shared-scene'
+sharedSceneGroup.visible = false
+scene.add(sharedSceneGroup)
 const camera = new THREE.PerspectiveCamera(
   70,
   window.innerWidth / window.innerHeight,
@@ -57,7 +70,7 @@ scene.add(directional)
 
 const floor = new THREE.Mesh(
   // Shared ground plane visible to all players.
-  new THREE.PlaneGeometry(8, 8),
+  new THREE.PlaneGeometry(4, 2),
   new THREE.MeshStandardMaterial({
     color: '#222831',
     roughness: 0.95,
@@ -67,18 +80,11 @@ const floor = new THREE.Mesh(
 )
 floor.rotation.x = -Math.PI / 2
 floor.position.y = FLOOR_Y
-scene.add(floor)
+sharedSceneGroup.add(floor)
 
 const playerNeedsSession = new PlayerNeedsSession()
 playerNeedsSession.addPlayer('player_1')
 playerNeedsSession.addPlayer('player_2')
-playerNeedsSession.start()
-
-const zoneSystem = new ZoneSystem(scene, { debug: true })
-
-setInterval(() => {
-  console.log('needs state:', JSON.stringify(playerNeedsSession.getState(), null, 2))
-}, 3000)
 
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
@@ -94,7 +100,7 @@ for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
   )
   marker.rotation.x = -Math.PI / 2
   marker.position.set(x, FLOOR_Y + 0.003, z)
-  scene.add(marker)
+  sharedSceneGroup.add(marker)
 }
 
 const floatingCubes = sharedState.cubes.map((cubeState, index) => {
@@ -103,7 +109,7 @@ const floatingCubes = sharedState.cubes.map((cubeState, index) => {
     size: 0.16,
   })
   floatingCube.mesh.userData.cubeIndex = index
-  scene.add(floatingCube.mesh)
+  sharedSceneGroup.add(floatingCube.mesh)
   return floatingCube
 })
 
@@ -114,13 +120,106 @@ const handTrackingSystem = createHandTrackingSystem(
   scene,
   interactiveObjects
 )
-const playerSystem = createPlayerSystem(scene)
-const smartWatch = createSmartWatchComponent({ scene, camera, renderer })
-
-window.render_game_to_text = smartWatch.renderGameToText
-arButton.addEventListener('click', () => {
-  smartWatch.maybeAutoStart()
+const playerSystem = createPlayerSystem(sharedSceneGroup)
+const calibrationSystem = createCalibrationSystem({
+  renderer,
+  scene,
+  controllers: controllerSystem.controllers,
 })
+let smartWatch = null
+let zoneSystem = null
+let hasStartedNeedsSession = false
+let hasTriggeredLandlordIntro = false
+window.render_game_to_text = () =>
+  JSON.stringify({
+    status: 'pending-calibration',
+    detail: 'Smart watch and gameplay systems initialize after shared-scene entry.',
+  })
+
+const ensurePostCalibrationSystemsInitialized = () => {
+  if (!hasStartedNeedsSession) {
+    playerNeedsSession.start()
+    hasStartedNeedsSession = true
+  }
+
+  if (!zoneSystem) {
+    zoneSystem = new ZoneSystem(sharedSceneGroup, { debug: true })
+  }
+
+  if (!smartWatch) {
+    smartWatch = createSmartWatchComponent({
+      scene,
+      camera,
+      renderer,
+      playerNeedsSession,
+    })
+    window.render_game_to_text = smartWatch.renderGameToText
+  }
+}
+
+const maybeStartLandlordIntro = (snapshot) => {
+  if (hasTriggeredLandlordIntro || !smartWatch) return
+
+  const players = Object.values(snapshot.players || {})
+  const calibratedPlayers = players.filter((player) => player?.isInAr).length
+  const totalPlayers = players.length
+  const fallbackDelaySeconds = 8
+  const hasEnoughConnectedPlayers = totalPlayers >= 2
+
+  if (!hasEnoughConnectedPlayers) {
+    introFallbackDeadlineAt = null
+  }
+
+  if (calibratedPlayers < 2) {
+    if (hasEnoughConnectedPlayers && introFallbackDeadlineAt === null) {
+      introFallbackDeadlineAt = elapsedSeconds + fallbackDelaySeconds
+    }
+
+    if (hasEnoughConnectedPlayers && introFallbackDeadlineAt !== null && elapsedSeconds >= introFallbackDeadlineAt) {
+      hasTriggeredLandlordIntro = true
+      lastIntroWaitReason = 'fallback-started'
+      console.log(
+        '[smart-watch][intro] starting landlord call via fallback (connected players ready, calibration flag missing)',
+        {
+          calibratedPlayers,
+          totalPlayers,
+          fallbackDelaySeconds,
+        }
+      )
+      void smartWatch.startIntro()
+      return
+    }
+
+    const reason = `waiting-for-players:${calibratedPlayers}/2`
+    if (lastIntroWaitReason !== reason) {
+      lastIntroWaitReason = reason
+      console.log('[smart-watch][intro] waiting for calibrated players', {
+        calibratedPlayers,
+        totalPlayers,
+        fallbackStartsIn:
+          introFallbackDeadlineAt === null
+            ? null
+            : Math.max(0, Math.ceil(introFallbackDeadlineAt - elapsedSeconds)),
+        players: players.map((player) => ({
+          id: player?.id || null,
+          slotIndex: player?.slotIndex,
+          isInAr: player?.isInAr,
+          connectionOrder: player?.connectionOrder,
+        })),
+      })
+    }
+    return
+  }
+
+  hasTriggeredLandlordIntro = true
+  introFallbackDeadlineAt = null
+  lastIntroWaitReason = 'started'
+  console.log('[smart-watch][intro] starting landlord call', {
+    calibratedPlayers,
+    totalPlayers,
+  })
+  void smartWatch.startIntro()
+}
 
 const activeSources = new Set()
 const lastHoveredCubeBySource = new Map()
@@ -133,13 +232,20 @@ const localHeadPosition = new THREE.Vector3()
 const localBodyPosition = new THREE.Vector3()
 const localHeadQuaternion = new THREE.Quaternion()
 const localHeadEuler = new THREE.Euler(0, 0, 0, 'YXZ')
-const LOCAL_BODY_HEIGHT_FROM_HEAD = 0.75
-const MIN_BODY_CENTER_Y = FLOOR_Y + 0.35
+const referenceSpaceRotation = new THREE.Quaternion()
+const rotatedHeadPosition = new THREE.Vector3()
+const worldUpAxis = new THREE.Vector3(0, 1, 0)
+let localBodyHeightFromHead = 0.75
+let minBodyCenterY = FLOOR_Y + 0.35
 let localBodyRotationY = 0
 let elapsedSeconds = 0
 let lastPoseUpdateAt = 0
 let hasLoggedLocalSpawnInfo = false
 let hasAppliedSpawnReferenceSpace = false
+let calibrationResult = null
+let isSharedSceneActive = false
+let lastIntroWaitReason = ''
+let introFallbackDeadlineAt = null
 
 const pushSharedState = () => {
   setGlobal('sharedState', sharedState)
@@ -149,7 +255,7 @@ const pushSharedState = () => {
 // Spawn assignment and recenter are driven by server-authoritative player data.
 // This helper is safe to call every frame and only applies once per XR session.
 const tryApplyLocalSpawnReferenceSpace = (snapshot) => {
-  if (!isInAr || hasAppliedSpawnReferenceSpace) return
+  if (!isInAr || hasAppliedSpawnReferenceSpace || !calibrationResult) return
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   if (!Array.isArray(selfPlayer?.spawnPosition) || selfPlayer.spawnPosition.length !== 3) {
     return
@@ -157,16 +263,44 @@ const tryApplyLocalSpawnReferenceSpace = (snapshot) => {
 
   renderer.xr.getCamera().getWorldPosition(localHeadPosition)
   const [spawnX, spawnY, spawnZ] = selfPlayer.spawnPosition
-  const targetHeadY = spawnY + LOCAL_BODY_HEIGHT_FROM_HEAD
+  const targetHeadY = spawnY + calibrationResult.headToBodyOffset
+  const calibratedFloorY =
+    typeof calibrationResult.floorY === 'number' ? calibrationResult.floorY : null
+  const yOffsetFromFloorCalibration =
+    calibratedFloorY === null ? null : calibratedFloorY - FLOOR_Y
   const referenceSpace = renderer.xr.getReferenceSpace()
   if (referenceSpace && typeof XRRigidTransform !== 'undefined') {
+    const yawCorrection =
+      typeof calibrationResult.yawToWorldNegZ === 'number'
+        ? calibrationResult.yawToWorldNegZ
+        : -(calibrationResult.forwardYaw || 0)
+    referenceSpaceRotation.setFromAxisAngle(worldUpAxis, yawCorrection)
+    rotatedHeadPosition.copy(localHeadPosition).applyQuaternion(referenceSpaceRotation)
+    const yTranslation =
+      yOffsetFromFloorCalibration === null
+        ? targetHeadY - localHeadPosition.y
+        : yOffsetFromFloorCalibration
     const offset = new XRRigidTransform({
-      x: spawnX - localHeadPosition.x,
-      y: targetHeadY - localHeadPosition.y,
-      z: spawnZ - localHeadPosition.z,
+      x: spawnX - rotatedHeadPosition.x,
+      y: yTranslation,
+      z: spawnZ - rotatedHeadPosition.z,
+    }, {
+      x: referenceSpaceRotation.x,
+      y: referenceSpaceRotation.y,
+      z: referenceSpaceRotation.z,
+      w: referenceSpaceRotation.w,
     })
     const offsetReferenceSpace = referenceSpace.getOffsetReferenceSpace(offset)
     renderer.xr.setReferenceSpace(offsetReferenceSpace)
+    console.log('[calibration] applying shared-scene reference space', {
+      calibratedFloorY,
+      calibratedHeadHeight: calibrationResult.headHeight,
+      spawnY,
+      targetHeadY,
+      finalOffsetY: yTranslation,
+      sharedFloorY: FLOOR_Y,
+    })
+    minBodyCenterY = FLOOR_Y + calibrationResult.bodyCenterFromFloor
     hasAppliedSpawnReferenceSpace = true
   }
 }
@@ -184,6 +318,7 @@ const getHitCubeIndex = (intersections = []) => {
 }
 
 const onPress = (sourceId, detail = {}) => {
+  if (!isSharedSceneActive) return
   activeSources.add(sourceId)
   const hitCubeIndex = getHitCubeIndex(detail.intersections)
   if (typeof hitCubeIndex === 'number') {
@@ -194,6 +329,7 @@ const onPress = (sourceId, detail = {}) => {
 }
 
 const onMove = (sourceId, detail = {}) => {
+  if (!isSharedSceneActive) return
   if (!activeSources.has(sourceId)) return
   const hitCubeIndex = getHitCubeIndex(detail.intersections)
   if (typeof hitCubeIndex === 'number') {
@@ -202,6 +338,7 @@ const onMove = (sourceId, detail = {}) => {
 }
 
 const onRelease = (sourceId, detail = {}) => {
+  if (!isSharedSceneActive) return
   if (!activeSources.has(sourceId)) return
   activeSources.delete(sourceId)
 
@@ -222,9 +359,54 @@ const onRelease = (sourceId, detail = {}) => {
   pushSharedState()
 }
 
-controllerSystem.events.addEventListener('selectstart', (event) =>
+const initializeLocalBodyFromHead = () => {
+  renderer.xr.getCamera().getWorldPosition(localHeadPosition)
+  localBodyPosition.copy(localHeadPosition)
+  localBodyPosition.y = Math.max(minBodyCenterY, localBodyPosition.y - localBodyHeightFromHead)
+  renderer.xr.getCamera().getWorldQuaternion(localHeadQuaternion)
+  localHeadEuler.setFromQuaternion(localHeadQuaternion)
+  localBodyRotationY = localHeadEuler.y
+}
+
+const tryEnterSharedScene = (snapshot) => {
+  if (!isInAr || isSharedSceneActive) return
+  if (calibrationSystem.getState() !== CalibrationState.calibrated) return
+
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  if (!Array.isArray(selfPlayer?.spawnPosition) || selfPlayer.spawnPosition.length !== 3) return
+
+  calibrationResult = calibrationSystem.getResult()
+  if (!calibrationResult) return
+
+  localBodyHeightFromHead = calibrationResult.headToBodyOffset
+  tryApplyLocalSpawnReferenceSpace(snapshot)
+  if (!hasAppliedSpawnReferenceSpace) return
+
+  initializeLocalBodyFromHead()
+  calibrationSystem.enterSharedScene()
+  sharedSceneGroup.visible = true
+  ensurePostCalibrationSystemsInitialized()
+  isSharedSceneActive = true
+  console.log('[calibration] local player entered shared scene', {
+    selfId: snapshot.selfId,
+    needsPlayerId: getNeedsPlayerIdForSnapshot(snapshot),
+  })
+  updateLocalPlayer({
+    isInAr: true,
+    position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
+    rotationY: localBodyRotationY,
+  })
+}
+
+controllerSystem.events.addEventListener('selectstart', (event) => {
+  const wasCalibrationTrigger = calibrationSystem.onTriggerPress(event.detail.controllerIndex)
+  if (wasCalibrationTrigger) {
+    ensurePostCalibrationSystemsInitialized()
+    void smartWatch?.unlockAudio?.()
+    return
+  }
   onPress(`controller-${event.detail.controllerIndex}`, event.detail)
-)
+})
 controllerSystem.events.addEventListener('selectmove', (event) =>
   onMove(`controller-${event.detail.controllerIndex}`, event.detail)
 )
@@ -244,8 +426,15 @@ handTrackingSystem.events.addEventListener('pinchend', (event) =>
 
 renderer.xr.addEventListener('sessionstart', () => {
   isInAr = true
+  isSharedSceneActive = false
+  sharedSceneGroup.visible = false
+  calibrationResult = null
+  localBodyHeightFromHead = 0.75
+  minBodyCenterY = FLOOR_Y + 0.35
   hasAppliedSpawnReferenceSpace = false
-  smartWatch.maybeAutoStart()
+  hasTriggeredLandlordIntro = false
+  lastIntroWaitReason = ''
+  introFallbackDeadlineAt = null
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -257,24 +446,20 @@ renderer.xr.addEventListener('sessionstart', () => {
     hasLoggedLocalSpawnInfo = true
   }
 
-  renderer.xr.getCamera().getWorldPosition(localBodyPosition)
-  localBodyPosition.y = Math.max(
-    MIN_BODY_CENTER_Y,
-    localBodyPosition.y - LOCAL_BODY_HEIGHT_FROM_HEAD
-  )
-  renderer.xr.getCamera().getWorldQuaternion(localHeadQuaternion)
-  localHeadEuler.setFromQuaternion(localHeadQuaternion)
-  localBodyRotationY = localHeadEuler.y
-  updateLocalPlayer({
-    isInAr: true,
-    position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
-    rotationY: localBodyRotationY,
-  })
+  calibrationSystem.beginSession()
+  updateLocalPlayer({ isInAr: false })
 })
 
 renderer.xr.addEventListener('sessionend', () => {
   isInAr = false
+  isSharedSceneActive = false
+  sharedSceneGroup.visible = false
+  calibrationResult = null
   hasAppliedSpawnReferenceSpace = false
+  hasTriggeredLandlordIntro = false
+  lastIntroWaitReason = ''
+  introFallbackDeadlineAt = null
+  calibrationSystem.endSession()
   updateLocalPlayer({ isInAr: false })
 })
 
@@ -286,20 +471,14 @@ renderer.setAnimationLoop(() => {
   const elapsedMilliseconds = elapsedSeconds * 1000
   const networkState = synchronize('sharedState') || sharedState
   const snapshot = getSnapshot()
-  tryApplyLocalSpawnReferenceSpace(snapshot)
+  tryEnterSharedScene(snapshot)
+  maybeStartLandlordIntro(snapshot)
+  calibrationSystem.update()
 
-  if (isInAr) {
-    renderer.xr.getCamera().getWorldPosition(localHeadPosition)
+  if (isInAr && isSharedSceneActive) {
     // Local capsule body is anchored in world space from headset pose
     // so the user can look down and still see their own body mesh.
-    localBodyPosition.copy(localHeadPosition)
-    localBodyPosition.y = Math.max(
-      MIN_BODY_CENTER_Y,
-      localBodyPosition.y - LOCAL_BODY_HEIGHT_FROM_HEAD
-    )
-    renderer.xr.getCamera().getWorldQuaternion(localHeadQuaternion)
-    localHeadEuler.setFromQuaternion(localHeadQuaternion)
-    localBodyRotationY = localHeadEuler.y
+    initializeLocalBodyFromHead()
   }
 
   if (!hasLoggedLocalSpawnInfo && snapshot.selfId && snapshot.players?.[snapshot.selfId]) {
@@ -311,7 +490,7 @@ renderer.setAnimationLoop(() => {
     hasLoggedLocalSpawnInfo = true
   }
 
-  if (isInAr && elapsedSeconds - lastPoseUpdateAt > 1 / 20) {
+  if (isInAr && isSharedSceneActive && elapsedSeconds - lastPoseUpdateAt > 1 / 20) {
     updateLocalPlayer({
       isInAr: true,
       position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
@@ -331,15 +510,22 @@ renderer.setAnimationLoop(() => {
   playerSystem.update(
     snapshot.players,
     snapshot.selfId,
-    isInAr ? localBodyPosition : null,
-    isInAr ? localBodyRotationY : null,
+    isInAr && isSharedSceneActive ? localBodyPosition : null,
+    isInAr && isSharedSceneActive ? localBodyRotationY : null,
     deltaSeconds
   )
   controllerSystem.update()
   handTrackingSystem.update()
-  smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
-  playerNeedsSession.update(deltaSeconds)
-  zoneSystem.update(snapshot.players, snapshot.selfId, isInAr ? localBodyPosition : null, playerNeedsSession)
+  if (isInAr && isSharedSceneActive && smartWatch) {
+    smartWatch.setPlayerId(getNeedsPlayerIdForSnapshot(snapshot))
+    smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
+  }
+  if (isInAr && isSharedSceneActive && hasStartedNeedsSession) {
+    playerNeedsSession.update(deltaSeconds)
+  }
+  if (isInAr && isSharedSceneActive && zoneSystem) {
+    zoneSystem.update(snapshot.players, snapshot.selfId, localBodyPosition, playerNeedsSession)
+  }
   renderer.render(scene, camera)
 })
 

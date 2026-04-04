@@ -115,6 +115,15 @@ export function broadcastGlobal(name, value) {
 
 export function updateLocalPlayer(update) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return
+  const selfId = playerState.selfId
+  const currentPlayer = selfId ? playerState.players[selfId] : null
+  if (selfId && currentPlayer && update && typeof update === 'object') {
+    playerState.players[selfId] = {
+      ...currentPlayer,
+      ...clone(update),
+    }
+    notifyStateSubscribers()
+  }
   socket.send(
     JSON.stringify({
       type: 'player:update',
