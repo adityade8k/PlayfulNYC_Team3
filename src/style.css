@@ -26,3 +26,22 @@ canvas {
   background: rgba(0, 0, 0, 0.45) !important;
   color: #ffffff !important;
 }
+
+.calibration-overlay {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(92vw, 640px);
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.58);
+  color: #f3fbff;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  z-index: 50;
+  pointer-events: none;
+}
