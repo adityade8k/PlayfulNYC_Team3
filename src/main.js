@@ -1,11 +1,13 @@
 import './style.css'
 import * as THREE from 'three'
 import { ARButton } from 'three/examples/jsm/webxr/ARButton.js'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { createFloatingCube } from './components/cube/index.js'
 import { createControllerSystem } from './components/controller/index.js'
 import { createHandTrackingSystem } from './components/handtracking/index.js'
 import { createPlayerSystem } from './components/players/index.js'
 import { createSmartWatchComponent } from './components/smart-watch/index.js'
+import environmentModelUrl from './assets/model.glb?url'
 import {
   connectMultiplayer,
   broadcastGlobal,
@@ -51,6 +53,9 @@ const camera = new THREE.PerspectiveCamera(
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
 renderer.setPixelRatio(window.devicePixelRatio)
 renderer.setSize(window.innerWidth, window.innerHeight)
+renderer.outputColorSpace = THREE.SRGBColorSpace
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.0
 renderer.xr.enabled = true
 renderer.setClearColor(0x000000, 0)
 document.body.appendChild(renderer.domElement)
@@ -64,23 +69,32 @@ arButton.classList.add('ar-button')
 document.body.appendChild(arButton)
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 0.85))
+scene.add(new THREE.AmbientLight(0xffffff, 0.25))
 const directional = new THREE.DirectionalLight(0xffffff, 0.5)
 directional.position.set(1, 2, 1)
 scene.add(directional)
 
-const floor = new THREE.Mesh(
-  // Shared ground plane visible to all players.
-  new THREE.PlaneGeometry(4, 2),
-  new THREE.MeshStandardMaterial({
-    color: '#222831',
-    roughness: 0.95,
-    metalness: 0.02,
-    side: THREE.DoubleSide,
+// Environment model transform.
+// Change these values to move/resize the loaded GLB.
+const environmentModelTransform = {
+  position: [0, FLOOR_Y, 0],
+  rotation: [0, -Math.PI / 2, 0],
+  scale: [0.7, 0.7, 0.7],
+}
+
+const gltfLoader = new GLTFLoader()
+void gltfLoader
+  .loadAsync(environmentModelUrl)
+  .then((gltf) => {
+    const environmentModel = gltf.scene
+    environmentModel.position.fromArray(environmentModelTransform.position)
+    environmentModel.rotation.fromArray(environmentModelTransform.rotation)
+    environmentModel.scale.fromArray(environmentModelTransform.scale)
+    sharedSceneGroup.add(environmentModel)
   })
-)
-floor.rotation.x = -Math.PI / 2
-floor.position.y = FLOOR_Y
-sharedSceneGroup.add(floor)
+  .catch((error) => {
+    console.error('[environment] failed to load model', error)
+  })
 
 const playerNeedsSession = new PlayerNeedsSession()
 playerNeedsSession.addPlayer('player_1')
