@@ -18,8 +18,18 @@ import {
   PLAYER_SPAWN_POINTS,
   createDefaultSharedState,
 } from '../shared/default-state.js'
+import { PlayerNeedsSession } from './components/needs/index.js'
 
 const sharedState = createDefaultSharedState()
+
+const playerNeedsSession = new PlayerNeedsSession()
+playerNeedsSession.addPlayer('player_1')
+playerNeedsSession.addPlayer('player_2')
+playerNeedsSession.start()
+
+setInterval(() => {
+  console.log('needs state:', JSON.stringify(playerNeedsSession.getState(), null, 2))
+}, 3000)
 
 setGlobal('sharedState', sharedState)
 connectMultiplayer()
@@ -315,6 +325,7 @@ renderer.setAnimationLoop(() => {
   )
   controllerSystem.update()
   handTrackingSystem.update()
+  playerNeedsSession.update(deltaSeconds)
   renderer.render(scene, camera)
 })
 
