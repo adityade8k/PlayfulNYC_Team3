@@ -21,6 +21,7 @@ import {
 } from '../shared/default-state.js'
 import { PlayerNeedsSession } from './components/needs/index.js'
 import { ZoneSystem } from './components/needs/zones.js'
+import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
 
 const getNeedsPlayerIdForSnapshot = (snapshot) => {
   const selfPlayer = snapshot.players?.[snapshot.selfId]
@@ -119,12 +120,6 @@ const handTrackingSystem = createHandTrackingSystem(
   scene,
   interactiveObjects
 )
-const playerSystem = createPlayerSystem(scene)
-const smartWatch = createSmartWatchComponent({ scene, camera, renderer })
-
-window.render_game_to_text = smartWatch.renderGameToText
-arButton.addEventListener('click', () => {
-  smartWatch.maybeAutoStart()
 const playerSystem = createPlayerSystem(sharedSceneGroup)
 const calibrationSystem = createCalibrationSystem({
   renderer,
@@ -134,6 +129,7 @@ const calibrationSystem = createCalibrationSystem({
 let smartWatch = null
 let zoneSystem = null
 let hasStartedNeedsSession = false
+let hasTriggeredLandlordIntro = false
 window.render_game_to_text = () =>
   JSON.stringify({
     status: 'pending-calibration',
@@ -161,9 +157,16 @@ const ensurePostCalibrationSystemsInitialized = () => {
   }
 }
 
-arButton.addEventListener('click', () => {
-  smartWatch?.maybeAutoStart()
-})
+const maybeStartLandlordIntro = (snapshot) => {
+  if (hasTriggeredLandlordIntro || !smartWatch) return
+
+  const players = Object.values(snapshot.players || {})
+  const calibratedPlayers = players.filter((player) => player?.isInAr).length
+  if (calibratedPlayers < 2) return
+
+  hasTriggeredLandlordIntro = true
+  void smartWatch.startIntro()
+}
 
 const activeSources = new Set()
 const lastHoveredCubeBySource = new Map()
@@ -329,7 +332,6 @@ const tryEnterSharedScene = (snapshot) => {
   sharedSceneGroup.visible = true
   ensurePostCalibrationSystemsInitialized()
   isSharedSceneActive = true
-  smartWatch?.maybeAutoStart()
   updateLocalPlayer({
     isInAr: true,
     position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
@@ -367,7 +369,7 @@ renderer.xr.addEventListener('sessionstart', () => {
   localBodyHeightFromHead = 0.75
   minBodyCenterY = FLOOR_Y + 0.35
   hasAppliedSpawnReferenceSpace = false
-  smartWatch.maybeAutoStart()
+  hasTriggeredLandlordIntro = false
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -379,19 +381,6 @@ renderer.xr.addEventListener('sessionstart', () => {
     hasLoggedLocalSpawnInfo = true
   }
 
-  renderer.xr.getCamera().getWorldPosition(localBodyPosition)
-  localBodyPosition.y = Math.max(
-    MIN_BODY_CENTER_Y,
-    localBodyPosition.y - LOCAL_BODY_HEIGHT_FROM_HEAD
-  )
-  renderer.xr.getCamera().getWorldQuaternion(localHeadQuaternion)
-  localHeadEuler.setFromQuaternion(localHeadQuaternion)
-  localBodyRotationY = localHeadEuler.y
-  updateLocalPlayer({
-    isInAr: true,
-    position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
-    rotationY: localBodyRotationY,
-  })
   calibrationSystem.beginSession()
   updateLocalPlayer({ isInAr: false })
 })
@@ -402,6 +391,7 @@ renderer.xr.addEventListener('sessionend', () => {
   sharedSceneGroup.visible = false
   calibrationResult = null
   hasAppliedSpawnReferenceSpace = false
+  hasTriggeredLandlordIntro = false
   calibrationSystem.endSession()
   updateLocalPlayer({ isInAr: false })
 })
@@ -415,6 +405,7 @@ renderer.setAnimationLoop(() => {
   const networkState = synchronize('sharedState') || sharedState
   const snapshot = getSnapshot()
   tryEnterSharedScene(snapshot)
+  maybeStartLandlordIntro(snapshot)
   calibrationSystem.update()
 
   if (isInAr && isSharedSceneActive) {
@@ -458,8 +449,6 @@ renderer.setAnimationLoop(() => {
   )
   controllerSystem.update()
   handTrackingSystem.update()
-  playerNeedsSession.update(deltaSeconds)
-  smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
   if (isInAr && isSharedSceneActive && smartWatch) {
     smartWatch.setPlayerId(getNeedsPlayerIdForSnapshot(snapshot))
     smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
