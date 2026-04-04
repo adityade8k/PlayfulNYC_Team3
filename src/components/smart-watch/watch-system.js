@@ -56,6 +56,19 @@ export const createSmartWatchXRSystem = ({
   strapBottom.position.set(-0.22, 0, -0.01)
   watchModel.add(strapBottom)
 
+  const wristBand = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.34, 0.34, 0.68, 32, 1, true),
+    new THREE.MeshStandardMaterial({
+      color: 0x181b1f,
+      roughness: 0.92,
+      metalness: 0.04,
+      side: THREE.DoubleSide,
+    })
+  )
+  wristBand.rotation.z = Math.PI / 2
+  wristBand.position.set(0, 0, -0.3)
+  watchModel.add(wristBand)
+
   const watchBody = new THREE.Mesh(
     new THREE.BoxGeometry(0.72, 0.92, 0.12),
     materials.case
