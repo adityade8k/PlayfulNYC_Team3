@@ -136,6 +136,22 @@ window.render_game_to_text = () =>
     detail: 'Smart watch and gameplay systems initialize after shared-scene entry.',
   })
 
+
+const ensureSmartWatchInitialized = (snapshot) => {
+  if (smartWatch) return
+
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  if (!selfPlayer) return
+
+  smartWatch = createSmartWatchComponent({
+    scene,
+    camera,
+    renderer,
+    playerNeedsSession,
+  })
+  window.render_game_to_text = smartWatch.renderGameToText
+  console.log('[smart-watch] initialized after local player joined')
+}
 const ensurePostCalibrationSystemsInitialized = () => {
   if (!hasStartedNeedsSession) {
     playerNeedsSession.start()
@@ -471,6 +487,7 @@ renderer.setAnimationLoop(() => {
   const elapsedMilliseconds = elapsedSeconds * 1000
   const networkState = synchronize('sharedState') || sharedState
   const snapshot = getSnapshot()
+  ensureSmartWatchInitialized(snapshot)
   tryEnterSharedScene(snapshot)
   maybeStartLandlordIntro(snapshot)
   calibrationSystem.update()
