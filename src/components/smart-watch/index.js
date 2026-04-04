@@ -1,5 +1,11 @@
 import { createSmartWatchXRSystem } from './watch-system.js'
 
+const resolveLandlordCallEndpoint = () => {
+  const envUrl = import.meta.env.VITE_LANDLORD_CALL_URL
+  if (typeof envUrl === 'string' && envUrl.length > 0) return envUrl
+  return '/api/landlord-call'
+}
+
 export const createSmartWatchComponent = ({
   scene,
   camera,
@@ -13,7 +19,7 @@ export const createSmartWatchComponent = ({
     renderer,
     playerNeedsSession,
     playerId,
-    endpoint: '/api/landlord-call',
+    endpoint: resolveLandlordCallEndpoint(),
     onStatus: (message) => {
       console.log(`[smart-watch] ${message}`)
     },

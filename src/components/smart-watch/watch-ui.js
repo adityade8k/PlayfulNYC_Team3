@@ -51,9 +51,19 @@ export const createLandlordCallController = (
   const audio = new Audio(endpoint)
   audio.preload = 'auto'
   audio.playsInline = true
+  audio.crossOrigin = 'anonymous'
   let errorAdvanceTimer = null
   let startPromise = null
   let primed = false
+  let audioUnlocked = false
+
+  const logAudio = (message, extra = null) => {
+    if (extra) {
+      console.log(`[smart-watch][audio] ${message}`, extra)
+      return
+    }
+    console.log(`[smart-watch][audio] ${message}`)
+  }
 
   const clearTimer = () => {
     if (errorAdvanceTimer !== null) {
@@ -64,12 +74,14 @@ export const createLandlordCallController = (
 
   const advanceToStats = () => {
     clearTimer()
+    logAudio('landlord call finished, switching to stats')
     store.setCallState({ speaking: false, finished: true })
     store.setScreen('stats')
     onStatus('Landlord intro finished. Stats screen is live.')
   }
 
   const setError = (message) => {
+    logAudio('audio error', { message, networkState: audio.networkState, readyState: audio.readyState })
     store.setCallState({
       speaking: false,
       error: message,
@@ -84,16 +96,33 @@ export const createLandlordCallController = (
     }
   }
 
+  audio.addEventListener('loadstart', () => {
+    logAudio('loadstart', { src: endpoint })
+  })
+  audio.addEventListener('loadedmetadata', () => {
+    logAudio('loadedmetadata', { duration: audio.duration })
+  })
+  audio.addEventListener('canplay', () => {
+    logAudio('canplay', { readyState: audio.readyState })
+  })
   audio.addEventListener('canplaythrough', () => {
+    logAudio('canplaythrough', { readyState: audio.readyState })
     store.setCallState({ audioReady: true })
     onStatus('Landlord audio buffered.')
   })
   audio.addEventListener('playing', () => {
     clearTimer()
+    logAudio('playing', { currentTime: audio.currentTime })
     store.setCallState({ speaking: true, error: null })
     onStatus('Landlord call started.')
   })
-  audio.addEventListener('ended', advanceToStats)
+  audio.addEventListener('pause', () => {
+    logAudio('pause', { currentTime: audio.currentTime })
+  })
+  audio.addEventListener('ended', () => {
+    logAudio('ended', { duration: audio.duration })
+    advanceToStats()
+  })
   audio.addEventListener('error', () => {
     setError('Audio could not be loaded from ElevenLabs.')
   })
@@ -101,8 +130,49 @@ export const createLandlordCallController = (
   const primeAudio = () => {
     if (primed) return
     primed = true
+    logAudio('priming audio', { endpoint })
     audio.load()
-    fetch(endpoint, { cache: 'force-cache' }).catch(() => {})
+    fetch(endpoint, { cache: 'force-cache' })
+      .then((response) => {
+        logAudio('prefetch response', {
+          ok: response.ok,
+          status: response.status,
+          contentType: response.headers.get('content-type'),
+        })
+      })
+      .catch((error) => {
+        logAudio('prefetch failed', {
+          message: error instanceof Error ? error.message : String(error),
+        })
+      })
+  }
+
+  const unlockAudio = async () => {
+    primeAudio()
+    if (audioUnlocked) {
+      logAudio('unlockAudio skipped, already unlocked')
+      return true
+    }
+
+    const previousMuted = audio.muted
+    try {
+      audio.muted = true
+      audio.currentTime = 0
+      logAudio('unlockAudio attempting silent play')
+      await audio.play()
+      audio.pause()
+      audio.currentTime = 0
+      audioUnlocked = true
+      logAudio('unlockAudio succeeded')
+      return true
+    } catch (error) {
+      logAudio('unlockAudio failed', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    } finally {
+      audio.muted = previousMuted
+    }
   }
 
   const startCall = async () => {
@@ -111,6 +181,11 @@ export const createLandlordCallController = (
     if (startPromise) return startPromise
     audio.pause()
     audio.currentTime = 0
+    logAudio('startCall invoked', {
+      paused: audio.paused,
+      readyState: audio.readyState,
+      networkState: audio.networkState,
+    })
 
     store.setScreen('incoming-call')
     store.setCallState({
@@ -123,7 +198,13 @@ export const createLandlordCallController = (
 
     startPromise = audio
       .play()
+      .then(() => {
+        logAudio('play() resolved')
+      })
       .catch((error) => {
+        logAudio('play() rejected', {
+          message: error instanceof Error ? error.message : String(error),
+        })
         setError(error instanceof Error ? error.message : 'Playback was blocked.')
       })
       .finally(() => {
@@ -135,6 +216,7 @@ export const createLandlordCallController = (
 
   return {
     primeAudio,
+    unlockAudio,
     startCall,
     replayCall: startCall,
     skipToStats: advanceToStats,
