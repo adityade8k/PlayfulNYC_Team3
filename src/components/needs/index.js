@@ -9,7 +9,7 @@
 // Tweak DECAY_RATES and FILL_RATES to change game feel.
 
 export const NEEDS_CONFIG = {
-  gameDuration: 600,        // seconds (10 min default — change freely)
+  gameDuration: 210,        // 3.5 minutes)
 
   // How fast each bar drains per second (0–100 scale)
   decayRates: {
