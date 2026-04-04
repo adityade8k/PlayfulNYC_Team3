@@ -22,9 +22,25 @@ export const registerLandlordCallRoute = (
 
   let audioBuffer = null
   let inflight = null
+  const allowOrigin = process.env.LANDLORD_CALL_ALLOW_ORIGIN || '*'
+
+  const applyCorsHeaders = (res) => {
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin)
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range')
+    if (allowOrigin !== '*') {
+      res.setHeader('Vary', 'Origin')
+    }
+  }
+
+  app.options(routePath, (_req, res) => {
+    applyCorsHeaders(res)
+    res.status(204).end()
+  })
 
   app.get(routePath, async (_req, res) => {
     try {
+      applyCorsHeaders(res)
       if (audioBuffer) {
         res.setHeader('Content-Type', 'audio/mpeg')
         res.setHeader('Cache-Control', 'public, max-age=86400')
@@ -48,6 +64,7 @@ export const registerLandlordCallRoute = (
       res.setHeader('Cache-Control', 'public, max-age=86400')
       res.send(audio)
     } catch (error) {
+      applyCorsHeaders(res)
       res.status(500).json({
         error:
           error instanceof Error

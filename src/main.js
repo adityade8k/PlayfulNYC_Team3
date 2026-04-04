@@ -162,9 +162,30 @@ const maybeStartLandlordIntro = (snapshot) => {
 
   const players = Object.values(snapshot.players || {})
   const calibratedPlayers = players.filter((player) => player?.isInAr).length
-  if (calibratedPlayers < 2) return
+  if (calibratedPlayers < 2) {
+    const reason = `waiting-for-players:${calibratedPlayers}/2`
+    if (lastIntroWaitReason !== reason) {
+      lastIntroWaitReason = reason
+      console.log('[smart-watch][intro] waiting for calibrated players', {
+        calibratedPlayers,
+        totalPlayers: players.length,
+        players: players.map((player) => ({
+          id: player?.id || null,
+          slotIndex: player?.slotIndex,
+          isInAr: player?.isInAr,
+          connectionOrder: player?.connectionOrder,
+        })),
+      })
+    }
+    return
+  }
 
   hasTriggeredLandlordIntro = true
+  lastIntroWaitReason = 'started'
+  console.log('[smart-watch][intro] starting landlord call', {
+    calibratedPlayers,
+    totalPlayers: players.length,
+  })
   void smartWatch.startIntro()
 }
 
@@ -191,6 +212,7 @@ let hasLoggedLocalSpawnInfo = false
 let hasAppliedSpawnReferenceSpace = false
 let calibrationResult = null
 let isSharedSceneActive = false
+let lastIntroWaitReason = ''
 
 const pushSharedState = () => {
   setGlobal('sharedState', sharedState)
@@ -332,6 +354,10 @@ const tryEnterSharedScene = (snapshot) => {
   sharedSceneGroup.visible = true
   ensurePostCalibrationSystemsInitialized()
   isSharedSceneActive = true
+  console.log('[calibration] local player entered shared scene', {
+    selfId: snapshot.selfId,
+    needsPlayerId: getNeedsPlayerIdForSnapshot(snapshot),
+  })
   updateLocalPlayer({
     isInAr: true,
     position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
@@ -370,6 +396,7 @@ renderer.xr.addEventListener('sessionstart', () => {
   minBodyCenterY = FLOOR_Y + 0.35
   hasAppliedSpawnReferenceSpace = false
   hasTriggeredLandlordIntro = false
+  lastIntroWaitReason = ''
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -392,6 +419,7 @@ renderer.xr.addEventListener('sessionend', () => {
   calibrationResult = null
   hasAppliedSpawnReferenceSpace = false
   hasTriggeredLandlordIntro = false
+  lastIntroWaitReason = ''
   calibrationSystem.endSession()
   updateLocalPlayer({ isInAr: false })
 })
