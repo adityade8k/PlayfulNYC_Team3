@@ -219,7 +219,7 @@ const drawStats = (context, state) => {
 
   NEED_ORDER.forEach((needKey, index) => {
     const need = state.needs[needKey]
-    const needColor = getNeedColor(need.value)
+    const needColor = need.color || getNeedColor(need.value)
     const column = index % 2
     const row = Math.floor(index / 2)
     const x = columns[column]
