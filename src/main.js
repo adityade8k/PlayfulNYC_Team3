@@ -86,6 +86,11 @@ const playerNeedsSession = new PlayerNeedsSession()
 playerNeedsSession.addPlayer('player_1')
 playerNeedsSession.addPlayer('player_2')
 
+playerNeedsSession.onSessionEnd = (summaries) => {
+  console.log('[needs] game over', summaries)
+  broadcastGlobal('needsSummary', summaries)
+}
+
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
   const [x, , z] = PLAYER_SPAWN_POINTS[index]
