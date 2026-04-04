@@ -3,6 +3,17 @@
 Vite + vanilla JavaScript + Three.js XR scene with LAN multiplayer over WebSocket.
 The app is intended to run from your computer and be opened from both desktop and headset on the same network.
 
+## Current multiplayer behavior
+
+- One shared ground plane anchors both players in the same world space.
+- Deterministic spawn points:
+  - first connected player -> left spawn
+  - second connected player -> right spawn
+- Each player is represented by a world-space capsule body.
+- Local player capsule remains visible when looking down in XR.
+- Remote player capsule updates continuously from networked position/rotation.
+- Cubes change color when a player's ray intersects a cube and trigger/pinch is released.
+
 ## Setup
 
 Install all dependencies:
@@ -29,6 +40,17 @@ Notes:
 
 - `npm run dev` is best for quick client iteration.
 - `npm run server` serves the built `dist` folder, so rebuild after client edits for LAN testing.
+- `npm run dev:all` runs:
+  - Vite on `:5173`
+  - multiplayer LAN server on `:2026`
+
+## Dev WebSocket behavior
+
+Socket URL is resolved as:
+
+- `VITE_WS_URL` (if set)
+- otherwise `ws://<same-host>:2026` when app is served from Vite (`:5173`)
+- otherwise same-origin WebSocket (`ws://<host>` or `wss://<host>`)
 
 ## Build + LAN server
 
@@ -50,11 +72,6 @@ Default URLs:
 
 - Desktop URL: `http://localhost:2026`
 - Headset URL: `http://<computer-ip>:2026`
-
-WebSocket URL is derived automatically from browser location:
-
-- `ws://<host>` on HTTP pages
-- `wss://<host>` on HTTPS pages
 
 ## Find your LAN IP
 
@@ -93,7 +110,7 @@ Expected behavior:
 
 - both desktop and headset load the same scene
 - WebSocket connects automatically on both clients
-- shared state updates (cube colors / `ballInfo`) propagate in realtime
+- shared state updates (cube colors) propagate in realtime
 - first connected player spawns left, second connected player spawns right
 - each player sees their own capsule when looking down and sees the other player capsule in world space
 
@@ -103,17 +120,18 @@ Expected behavior:
 - `src/network/clientSync.js` provides shared-key sync helpers:
   - `connectSocket()`
   - `broadcastGlobal(name, value)`
+  - `setSynchronized(name, value)`
   - `subscribeGlobal(name, handler)`
   - `synchronize(name, initialValue)`
 - `src/network/multiplayer.js` keeps player snapshot/spawn sync for capsules.
-- `main.js` includes synced `ballInfo` example state:
-  - `ballInfo = { rgb: "red", xyz: [0, 1.5, 0] }`
+- `src/main.js` handles scene setup, spawn recentering, local/remote capsule updates, and interaction-based cube recolor sync.
 
 Player spawn behavior:
 
 - first player to connect -> left spawn (`[-2, 0, 0]` reference side)
 - second player to connect -> right spawn (`[2, 0, 0]` reference side)
 - capsules update in realtime from shared player state
+- cube colors update in realtime from trigger/pinch release events
 
 ## Optional HTTPS mode
 
