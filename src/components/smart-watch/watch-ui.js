@@ -55,6 +55,7 @@ export const createLandlordCallController = (
   let errorAdvanceTimer = null
   let startPromise = null
   let primed = false
+  let audioUnlocked = false
 
   const logAudio = (message, extra = null) => {
     if (extra) {
@@ -146,6 +147,34 @@ export const createLandlordCallController = (
       })
   }
 
+  const unlockAudio = async () => {
+    primeAudio()
+    if (audioUnlocked) {
+      logAudio('unlockAudio skipped, already unlocked')
+      return true
+    }
+
+    const previousMuted = audio.muted
+    try {
+      audio.muted = true
+      audio.currentTime = 0
+      logAudio('unlockAudio attempting silent play')
+      await audio.play()
+      audio.pause()
+      audio.currentTime = 0
+      audioUnlocked = true
+      logAudio('unlockAudio succeeded')
+      return true
+    } catch (error) {
+      logAudio('unlockAudio failed', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    } finally {
+      audio.muted = previousMuted
+    }
+  }
+
   const startCall = async () => {
     primeAudio()
     clearTimer()
@@ -187,6 +216,7 @@ export const createLandlordCallController = (
 
   return {
     primeAudio,
+    unlockAudio,
     startCall,
     replayCall: startCall,
     skipToStats: advanceToStats,

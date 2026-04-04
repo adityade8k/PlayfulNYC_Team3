@@ -250,6 +250,9 @@ export const createSmartWatchXRSystem = ({
 
   return {
     store,
+    unlockAudio() {
+      return landlordCall.unlockAudio()
+    },
     startIntro() {
       return landlordCall.startCall()
     },
