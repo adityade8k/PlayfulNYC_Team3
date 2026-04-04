@@ -16,6 +16,7 @@ export const createSmartWatchXRSystem = ({
   autoStart = false,
   secureContextMessage = true,
   onStatus = () => {},
+  onLandlordFinished = () => {},
 } = {}) => {
   if (!scene || !camera || !renderer) {
     throw new Error('createSmartWatchXRSystem requires scene, camera, and renderer.')
@@ -137,6 +138,7 @@ export const createSmartWatchXRSystem = ({
     endpoint,
     autoAdvanceOnError: true,
     onStatus,
+    onFinished: onLandlordFinished,
   })
   landlordCall.primeAudio()
 
