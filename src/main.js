@@ -135,23 +135,6 @@ window.render_game_to_text = () =>
     status: 'pending-calibration',
     detail: 'Smart watch and gameplay systems initialize after shared-scene entry.',
   })
-
-
-const ensureSmartWatchInitialized = (snapshot) => {
-  if (smartWatch) return
-
-  const selfPlayer = snapshot.players?.[snapshot.selfId]
-  if (!selfPlayer) return
-
-  smartWatch = createSmartWatchComponent({
-    scene,
-    camera,
-    renderer,
-    playerNeedsSession,
-  })
-  window.render_game_to_text = smartWatch.renderGameToText
-  console.log('[smart-watch] initialized after local player joined')
-}
 const ensurePostCalibrationSystemsInitialized = () => {
   if (!hasStartedNeedsSession) {
     playerNeedsSession.start()
@@ -417,8 +400,6 @@ const tryEnterSharedScene = (snapshot) => {
 controllerSystem.events.addEventListener('selectstart', (event) => {
   const wasCalibrationTrigger = calibrationSystem.onTriggerPress(event.detail.controllerIndex)
   if (wasCalibrationTrigger) {
-    ensurePostCalibrationSystemsInitialized()
-    void smartWatch?.unlockAudio?.()
     return
   }
   onPress(`controller-${event.detail.controllerIndex}`, event.detail)
@@ -487,7 +468,6 @@ renderer.setAnimationLoop(() => {
   const elapsedMilliseconds = elapsedSeconds * 1000
   const networkState = synchronize('sharedState') || sharedState
   const snapshot = getSnapshot()
-  ensureSmartWatchInitialized(snapshot)
   tryEnterSharedScene(snapshot)
   maybeStartLandlordIntro(snapshot)
   calibrationSystem.update()
