@@ -5,7 +5,6 @@ import { createFloatingCube } from './components/cube/index.js'
 import { createControllerSystem } from './components/controller/index.js'
 import { createHandTrackingSystem } from './components/handtracking/index.js'
 import { createPlayerSystem } from './components/players/index.js'
-import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
 import { createSmartWatchComponent } from './components/smart-watch/index.js'
 import {
   connectMultiplayer,
@@ -120,6 +119,12 @@ const handTrackingSystem = createHandTrackingSystem(
   scene,
   interactiveObjects
 )
+const playerSystem = createPlayerSystem(scene)
+const smartWatch = createSmartWatchComponent({ scene, camera, renderer })
+
+window.render_game_to_text = smartWatch.renderGameToText
+arButton.addEventListener('click', () => {
+  smartWatch.maybeAutoStart()
 const playerSystem = createPlayerSystem(sharedSceneGroup)
 const calibrationSystem = createCalibrationSystem({
   renderer,
@@ -362,6 +367,31 @@ renderer.xr.addEventListener('sessionstart', () => {
   localBodyHeightFromHead = 0.75
   minBodyCenterY = FLOOR_Y + 0.35
   hasAppliedSpawnReferenceSpace = false
+  smartWatch.maybeAutoStart()
+  const snapshot = getSnapshot()
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  tryApplyLocalSpawnReferenceSpace(snapshot)
+  if (Array.isArray(selfPlayer?.spawnPosition) && selfPlayer.spawnPosition.length === 3) {
+    const spawnSide = selfPlayer.slotIndex === 0 ? 'left' : 'right'
+    console.log(
+      `[client] local spawn assigned: ${spawnSide} (slot=${selfPlayer.slotIndex}, position=${selfPlayer.spawnPosition.join(',')})`
+    )
+    hasLoggedLocalSpawnInfo = true
+  }
+
+  renderer.xr.getCamera().getWorldPosition(localBodyPosition)
+  localBodyPosition.y = Math.max(
+    MIN_BODY_CENTER_Y,
+    localBodyPosition.y - LOCAL_BODY_HEIGHT_FROM_HEAD
+  )
+  renderer.xr.getCamera().getWorldQuaternion(localHeadQuaternion)
+  localHeadEuler.setFromQuaternion(localHeadQuaternion)
+  localBodyRotationY = localHeadEuler.y
+  updateLocalPlayer({
+    isInAr: true,
+    position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
+    rotationY: localBodyRotationY,
+  })
   calibrationSystem.beginSession()
   updateLocalPlayer({ isInAr: false })
 })
@@ -428,6 +458,8 @@ renderer.setAnimationLoop(() => {
   )
   controllerSystem.update()
   handTrackingSystem.update()
+  playerNeedsSession.update(deltaSeconds)
+  smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
   if (isInAr && isSharedSceneActive && smartWatch) {
     smartWatch.setPlayerId(getNeedsPlayerIdForSnapshot(snapshot))
     smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
