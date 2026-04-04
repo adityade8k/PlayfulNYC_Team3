@@ -7,6 +7,7 @@ import http from 'node:http'
 import https from 'node:https'
 import express from 'express'
 import { WebSocketServer } from 'ws'
+import { registerLandlordCallRoute } from './smart-watch/landlord-call.js'
 import {
   PLAYER_SPAWN_POINTS,
   createDefaultSharedState,
@@ -29,6 +30,10 @@ const keyPath = process.env.HTTPS_KEY_PATH || process.env.SSL_KEY_PATH
 const certPath = process.env.HTTPS_CERT_PATH || process.env.SSL_CERT_PATH
 
 const app = express()
+
+registerLandlordCallRoute(app, {
+  envFiles: [path.resolve(projectRoot, '.env.local')],
+})
 
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir))
