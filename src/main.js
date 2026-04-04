@@ -19,17 +19,9 @@ import {
   createDefaultSharedState,
 } from '../shared/default-state.js'
 import { PlayerNeedsSession } from './components/needs/index.js'
+import { ZoneSystem } from './components/needs/zones.js'
 
 const sharedState = createDefaultSharedState()
-
-const playerNeedsSession = new PlayerNeedsSession()
-playerNeedsSession.addPlayer('player_1')
-playerNeedsSession.addPlayer('player_2')
-playerNeedsSession.start()
-
-setInterval(() => {
-  console.log('needs state:', JSON.stringify(playerNeedsSession.getState(), null, 2))
-}, 3000)
 
 setGlobal('sharedState', sharedState)
 connectMultiplayer()
@@ -75,6 +67,17 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2
 floor.position.y = FLOOR_Y
 scene.add(floor)
+
+const playerNeedsSession = new PlayerNeedsSession()
+playerNeedsSession.addPlayer('player_1')
+playerNeedsSession.addPlayer('player_2')
+playerNeedsSession.start()
+
+const zoneSystem = new ZoneSystem(scene, { debug: true })
+
+setInterval(() => {
+  console.log('needs state:', JSON.stringify(playerNeedsSession.getState(), null, 2))
+}, 3000)
 
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
@@ -326,6 +329,7 @@ renderer.setAnimationLoop(() => {
   controllerSystem.update()
   handTrackingSystem.update()
   playerNeedsSession.update(deltaSeconds)
+  zoneSystem.update(snapshot.players, snapshot.selfId, isInAr ? localBodyPosition : null, playerNeedsSession)
   renderer.render(scene, camera)
 })
 
