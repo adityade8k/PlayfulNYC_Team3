@@ -79,7 +79,7 @@ scene.add(directional)
 const environmentModelTransform = {
   position: [0, FLOOR_Y, 0],
   rotation: [0, -Math.PI / 2, 0],
-  scale: [0.7, 0.7, 0.7],
+  scale: [0.852, 0.852, 0.852],
 }
 
 const gltfLoader = new GLTFLoader()
