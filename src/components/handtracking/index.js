@@ -40,6 +40,23 @@ const getPinchDistance = (hand) => {
   return thumbTip.position.distanceTo(indexTip.position)
 }
 
+const applyHandOpacity = (hand, opacity = 0.3) => {
+  hand.traverse((object) => {
+    if (!object.material) return
+
+    const materials = Array.isArray(object.material)
+      ? object.material
+      : [object.material]
+
+    for (const material of materials) {
+      material.transparent = true
+      material.opacity = opacity
+      material.depthWrite = false
+      material.needsUpdate = true
+    }
+  })
+}
+
 export function createHandTrackingSystem(renderer, scene, interactiveObjects = []) {
   const events = new EventTarget()
   const raycaster = new THREE.Raycaster()
@@ -61,6 +78,7 @@ export function createHandTrackingSystem(renderer, scene, interactiveObjects = [
     events,
     update() {
       for (const hand of hands) {
+        applyHandOpacity(hand, 0.3)
         const handIndex = hand.userData.handIndex
         const intersections = intersectFromInput(raycaster, hand, interactiveObjects)
         const ray = hand.getObjectByName('ray')
