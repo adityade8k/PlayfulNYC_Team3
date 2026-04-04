@@ -91,6 +91,11 @@ playerNeedsSession.onSessionEnd = (summaries) => {
   void smartWatch.startOutcomeCall(summaries)
 }
 
+playerNeedsSession.onSessionEnd = (summaries) => {
+  console.log('[needs] game over', summaries)
+  broadcastGlobal('needsSummary', summaries)
+}
+
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
   const [x, , z] = PLAYER_SPAWN_POINTS[index]
@@ -140,13 +145,7 @@ window.render_game_to_text = () =>
     status: 'pending-calibration',
     detail: 'Smart watch and gameplay systems initialize after shared-scene entry.',
   })
-
 const ensurePostCalibrationSystemsInitialized = () => {
-  if (!hasStartedNeedsSession) {
-    playerNeedsSession.start()
-    hasStartedNeedsSession = true
-  }
-
   if (!zoneSystem) {
     zoneSystem = new ZoneSystem(sharedSceneGroup, { debug: true })
   }
@@ -157,6 +156,12 @@ const ensurePostCalibrationSystemsInitialized = () => {
       camera,
       renderer,
       playerNeedsSession,
+      onLandlordFinished: () => {
+        if (hasStartedNeedsSession) return
+        playerNeedsSession.start()
+        hasStartedNeedsSession = true
+        console.log('[needs] session started after landlord intro finished')
+      },
     })
     window.render_game_to_text = smartWatch.renderGameToText
   }
@@ -406,8 +411,6 @@ const tryEnterSharedScene = (snapshot) => {
 controllerSystem.events.addEventListener('selectstart', (event) => {
   const wasCalibrationTrigger = calibrationSystem.onTriggerPress(event.detail.controllerIndex)
   if (wasCalibrationTrigger) {
-    ensurePostCalibrationSystemsInitialized()
-    void smartWatch?.unlockAudio?.()
     return
   }
   onPress(`controller-${event.detail.controllerIndex}`, event.detail)

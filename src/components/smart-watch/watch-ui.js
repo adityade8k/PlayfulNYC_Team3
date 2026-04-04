@@ -46,6 +46,7 @@ export const createLandlordCallController = (
     endpoint = '/api/landlord-call',
     autoAdvanceOnError = false,
     onStatus = () => {},
+    onFinished = () => {},
   } = {}
 ) => {
   const audio = new Audio()
@@ -91,6 +92,8 @@ export const createLandlordCallController = (
     store.setCallState({ speaking: false, finished: true })
     store.setScreen('stats')
     onStatus('Landlord call finished.')
+    onStatus('Landlord intro finished. Stats screen is live.')
+    onFinished()
   }
 
   const setError = (message) => {
