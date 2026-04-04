@@ -32,11 +32,11 @@ const app = express()
 
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir))
-  app.get('*', (_req, res) => {
+  app.use((_req, res) => {
     res.sendFile(path.join(distDir, 'index.html'))
   })
 } else {
-  app.get('*', (_req, res) => {
+  app.use((_req, res) => {
     res
       .status(503)
       .type('text/plain')
@@ -70,6 +70,7 @@ const wss = new WebSocketServer({ server })
 
 const clients = new Map()
 const slotOwners = new Array(PLAYER_SPAWN_POINTS.length).fill(null)
+let connectionCounter = 0
 const globals = {
   sharedState: createDefaultSharedState(),
   // Example shared object used as a reference sync pattern.
@@ -115,12 +116,15 @@ const broadcastJson = (payload, exceptId = null) => {
 
 wss.on('connection', (ws) => {
   const id = randomUUID()
+  connectionCounter += 1
+  const connectionOrder = connectionCounter
   const slotIndex = assignSpawnSlot(id)
   const spawnPosition = PLAYER_SPAWN_POINTS[slotIndex]
   const spawnSide = slotIndex === 0 ? 'left' : 'right'
 
   const player = {
     id,
+    connectionOrder,
     slotIndex,
     spawnPosition: clone(spawnPosition),
     position: clone(spawnPosition),
@@ -131,7 +135,7 @@ wss.on('connection', (ws) => {
   clients.set(id, { ws, player })
 
   console.log(
-    `[connect] ${id} assigned ${spawnSide} spawn (slot=${slotIndex}, position=${spawnPosition.join(',')})`
+    `[connect] #${connectionOrder} ${id} assigned ${spawnSide} spawn (slot=${slotIndex}, position=${spawnPosition.join(',')})`
   )
 
   sendJson(ws, {

@@ -1,13 +1,11 @@
-export const FLOOR_Y = -1
-
 export const DEFAULT_SHARED_STATE = {
-  color: 'red',
-  position: [0, 0, -1],
   cubes: [
-    { color: '#ff4b4b', position: [-0.7, FLOOR_Y + 1.1, -1] },
-    { color: '#4b8bff', position: [0.7, FLOOR_Y + 1.1, -1] },
+    { color: 'red', position: [-0.45, 0.1, -1.1] },
+    { color: 'blue', position: [0.45, 0.1, -1.1] },
   ],
 }
+
+export const FLOOR_Y = -1
 
 export const PLAYER_SPAWN_POINTS = [
   // Deterministic two-player spawn mapping:
@@ -17,8 +15,6 @@ export const PLAYER_SPAWN_POINTS = [
 ]
 
 export const createDefaultSharedState = () => ({
-  color: DEFAULT_SHARED_STATE.color,
-  position: [...DEFAULT_SHARED_STATE.position],
   cubes: DEFAULT_SHARED_STATE.cubes.map((cube) => ({
     color: cube.color,
     position: [...cube.position],

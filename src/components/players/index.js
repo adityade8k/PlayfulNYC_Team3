@@ -45,15 +45,17 @@ export function createPlayerSystem(scene) {
         seen.add(playerId)
         const mesh = getOrCreatePlayerMesh(playerId)
         if (playerId === selfId && localBodyPosition) {
+          // Keep local body in world space so looking down shows your own capsule.
           mesh.position.copy(localBodyPosition)
           if (typeof localBodyRotationY === 'number') {
             mesh.rotation.y = localBodyRotationY
           }
         } else if (Array.isArray(player.position) && player.position.length === 3) {
+          const hasRemoteTarget = remoteTargets.has(playerId)
           const target = remoteTargets.get(playerId) || new THREE.Vector3()
           target.fromArray(player.position)
           remoteTargets.set(playerId, target)
-          if (mesh.position.lengthSq() === 0) {
+          if (!hasRemoteTarget) {
             mesh.position.copy(target)
           } else {
             // Smooth remote capsule updates from networked body positions.

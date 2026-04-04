@@ -20,10 +20,8 @@ import {
 } from '../shared/default-state.js'
 
 const sharedState = createDefaultSharedState()
-const INITIAL_BALL_INFO = { rgb: 'red', xyz: [0, FLOOR_Y + 1.5, 0] }
 
 setGlobal('sharedState', sharedState)
-setGlobal('ballInfo', INITIAL_BALL_INFO)
 connectMultiplayer()
 
 const scene = new THREE.Scene()
@@ -68,17 +66,6 @@ floor.rotation.x = -Math.PI / 2
 floor.position.y = FLOOR_Y
 scene.add(floor)
 
-const sharedBall = new THREE.Mesh(
-  new THREE.SphereGeometry(0.11, 20, 20),
-  new THREE.MeshStandardMaterial({
-    color: INITIAL_BALL_INFO.rgb,
-    roughness: 0.45,
-    metalness: 0.08,
-  })
-)
-sharedBall.position.fromArray(INITIAL_BALL_INFO.xyz)
-scene.add(sharedBall)
-
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
   const [x, , z] = PLAYER_SPAWN_POINTS[index]
@@ -96,32 +83,14 @@ for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
   scene.add(marker)
 }
 
-const getSharedCubeState = (state, index) => {
-  if (Array.isArray(state?.cubes) && state.cubes[index]) {
-    return state.cubes[index]
-  }
-  // Backward compatibility for older single-cube shared state shape.
-  if (index === 0) {
-    return {
-      position: state?.position ?? [0, FLOOR_Y + 1.1, -1],
-      color: state?.color ?? '#ff4b4b',
-    }
-  }
-  return {
-    position: [0.7, FLOOR_Y + 1.1, -1],
-    color: '#4b8bff',
-  }
-}
-
-const floatingCubes = [0, 1].map((index) => {
-  const cubeState = getSharedCubeState(sharedState, index)
-  const cube = createFloatingCube({
+const floatingCubes = sharedState.cubes.map((cubeState, index) => {
+  const floatingCube = createFloatingCube({
     position: cubeState.position,
     size: 0.16,
   })
-  cube.mesh.userData.cubeIndex = index
-  scene.add(cube.mesh)
-  return cube
+  floatingCube.mesh.userData.cubeIndex = index
+  scene.add(floatingCube.mesh)
+  return floatingCube
 })
 
 const interactiveObjects = floatingCubes.map((cube) => cube.mesh)
@@ -134,6 +103,7 @@ const handTrackingSystem = createHandTrackingSystem(
 const playerSystem = createPlayerSystem(scene)
 
 const activeSources = new Set()
+const lastHoveredCubeBySource = new Map()
 const randomHexColor = () =>
   `#${Math.floor(Math.random() * 0xffffff)
     .toString(16)
@@ -149,68 +119,91 @@ let localBodyRotationY = 0
 let elapsedSeconds = 0
 let lastPoseUpdateAt = 0
 let hasLoggedLocalSpawnInfo = false
+let hasAppliedSpawnReferenceSpace = false
 
 const pushSharedState = () => {
   setGlobal('sharedState', sharedState)
-  broadcastGlobal('sharedState')
+  broadcastGlobal('sharedState', sharedState)
 }
 
-const pushBallInfo = (ballInfo) => {
-  setGlobal('ballInfo', ballInfo)
-  broadcastGlobal('ballInfo')
+// Spawn assignment and recenter are driven by server-authoritative player data.
+// This helper is safe to call every frame and only applies once per XR session.
+const tryApplyLocalSpawnReferenceSpace = (snapshot) => {
+  if (!isInAr || hasAppliedSpawnReferenceSpace) return
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  if (!Array.isArray(selfPlayer?.spawnPosition) || selfPlayer.spawnPosition.length !== 3) {
+    return
+  }
+
+  renderer.xr.getCamera().getWorldPosition(localHeadPosition)
+  const [spawnX, spawnY, spawnZ] = selfPlayer.spawnPosition
+  const targetHeadY = spawnY + LOCAL_BODY_HEIGHT_FROM_HEAD
+  const referenceSpace = renderer.xr.getReferenceSpace()
+  if (referenceSpace && typeof XRRigidTransform !== 'undefined') {
+    const offset = new XRRigidTransform({
+      x: spawnX - localHeadPosition.x,
+      y: targetHeadY - localHeadPosition.y,
+      z: spawnZ - localHeadPosition.z,
+    })
+    const offsetReferenceSpace = referenceSpace.getOffsetReferenceSpace(offset)
+    renderer.xr.setReferenceSpace(offsetReferenceSpace)
+    hasAppliedSpawnReferenceSpace = true
+  }
 }
 
-const onPress = (sourceId) => {
-  activeSources.add(sourceId)
-}
-
-const onMove = () => {}
-
-const getCubeIndexFromIntersections = (intersections = []) => {
+const getHitCubeIndex = (intersections = []) => {
   for (const hit of intersections) {
     let current = hit.object
     while (current) {
-      if (Number.isInteger(current.userData?.cubeIndex)) {
-        return current.userData.cubeIndex
-      }
+      const cubeIndex = current.userData?.cubeIndex
+      if (typeof cubeIndex === 'number') return cubeIndex
       current = current.parent
     }
   }
   return null
 }
 
-const ensureTwoCubeSharedState = () => {
-  if (!Array.isArray(sharedState.cubes)) {
-    sharedState.cubes = [0, 1].map((index) => {
-      const state = getSharedCubeState(sharedState, index)
-      return {
-        color: state.color,
-        position: [...state.position],
-      }
-    })
+const onPress = (sourceId, detail = {}) => {
+  activeSources.add(sourceId)
+  const hitCubeIndex = getHitCubeIndex(detail.intersections)
+  if (typeof hitCubeIndex === 'number') {
+    lastHoveredCubeBySource.set(sourceId, hitCubeIndex)
+  } else {
+    lastHoveredCubeBySource.delete(sourceId)
+  }
+}
+
+const onMove = (sourceId, detail = {}) => {
+  if (!activeSources.has(sourceId)) return
+  const hitCubeIndex = getHitCubeIndex(detail.intersections)
+  if (typeof hitCubeIndex === 'number') {
+    lastHoveredCubeBySource.set(sourceId, hitCubeIndex)
   }
 }
 
 const onRelease = (sourceId, detail = {}) => {
   if (!activeSources.has(sourceId)) return
   activeSources.delete(sourceId)
-  const cubeIndex = getCubeIndexFromIntersections(detail.intersections)
-  if (cubeIndex === null) return
-  ensureTwoCubeSharedState()
-  sharedState.cubes[cubeIndex].color = randomHexColor()
-  pushSharedState()
 
-  // Example shared object sync pattern: mutate local cache then broadcast.
-  const cubePosition = sharedState.cubes[cubeIndex].position
-  const nextBallInfo = {
-    rgb: sharedState.cubes[cubeIndex].color || 'red',
-    xyz: [cubePosition[0], cubePosition[1] + 0.24, cubePosition[2]],
-  }
-  pushBallInfo(nextBallInfo)
+  // Recolor on trigger/pinch release if the ray is on a cube now,
+  // or if it was hovering that cube just before release.
+  const currentHitCubeIndex = getHitCubeIndex(detail.intersections)
+  const hitCubeIndex =
+    typeof currentHitCubeIndex === 'number'
+      ? currentHitCubeIndex
+      : lastHoveredCubeBySource.get(sourceId)
+
+  lastHoveredCubeBySource.delete(sourceId)
+  if (hitCubeIndex === null) return
+  if (!sharedState.cubes[hitCubeIndex]) return
+
+  // Only recolor when release happens while the ray/pinch is pointing at a cube.
+  sharedState.cubes[hitCubeIndex].color = randomHexColor()
+  pushSharedState()
 }
 
 controllerSystem.events.addEventListener('selectstart', (event) =>
-  onPress(`controller-${event.detail.controllerIndex}`)
+  onPress(`controller-${event.detail.controllerIndex}`, event.detail)
 )
 controllerSystem.events.addEventListener('selectmove', (event) =>
   onMove(`controller-${event.detail.controllerIndex}`, event.detail)
@@ -220,7 +213,7 @@ controllerSystem.events.addEventListener('selectend', (event) =>
 )
 
 handTrackingSystem.events.addEventListener('pinchstart', (event) =>
-  onPress(`hand-${event.detail.handIndex}`)
+  onPress(`hand-${event.detail.handIndex}`, event.detail)
 )
 handTrackingSystem.events.addEventListener('pinchmove', (event) =>
   onMove(`hand-${event.detail.handIndex}`, event.detail)
@@ -231,24 +224,11 @@ handTrackingSystem.events.addEventListener('pinchend', (event) =>
 
 renderer.xr.addEventListener('sessionstart', () => {
   isInAr = true
+  hasAppliedSpawnReferenceSpace = false
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
-
-  renderer.xr.getCamera().getWorldPosition(localHeadPosition)
+  tryApplyLocalSpawnReferenceSpace(snapshot)
   if (Array.isArray(selfPlayer?.spawnPosition) && selfPlayer.spawnPosition.length === 3) {
-    const [spawnX, spawnY, spawnZ] = selfPlayer.spawnPosition
-    const targetHeadY = spawnY + LOCAL_BODY_HEIGHT_FROM_HEAD
-    const referenceSpace = renderer.xr.getReferenceSpace()
-    if (referenceSpace && typeof XRRigidTransform !== 'undefined') {
-      const offset = new XRRigidTransform({
-        x: spawnX - localHeadPosition.x,
-        y: targetHeadY - localHeadPosition.y,
-        z: spawnZ - localHeadPosition.z,
-      })
-      const offsetReferenceSpace = referenceSpace.getOffsetReferenceSpace(offset)
-      renderer.xr.setReferenceSpace(offsetReferenceSpace)
-    }
-
     const spawnSide = selfPlayer.slotIndex === 0 ? 'left' : 'right'
     console.log(
       `[client] local spawn assigned: ${spawnSide} (slot=${selfPlayer.slotIndex}, position=${selfPlayer.spawnPosition.join(',')})`
@@ -273,6 +253,7 @@ renderer.xr.addEventListener('sessionstart', () => {
 
 renderer.xr.addEventListener('sessionend', () => {
   isInAr = false
+  hasAppliedSpawnReferenceSpace = false
   updateLocalPlayer({ isInAr: false })
 })
 
@@ -282,8 +263,8 @@ renderer.setAnimationLoop(() => {
   const deltaSeconds = timer.getDelta()
   elapsedSeconds += deltaSeconds
   const networkState = synchronize('sharedState') || sharedState
-  const ballInfo = synchronize('ballInfo', INITIAL_BALL_INFO) || INITIAL_BALL_INFO
   const snapshot = getSnapshot()
+  tryApplyLocalSpawnReferenceSpace(snapshot)
 
   if (isInAr) {
     renderer.xr.getCamera().getWorldPosition(localHeadPosition)
@@ -317,18 +298,13 @@ renderer.setAnimationLoop(() => {
     lastPoseUpdateAt = elapsedSeconds
   }
 
-  // Apply networked state to both cubes so everyone sees the same colors.
   for (let index = 0; index < floatingCubes.length; index += 1) {
-    const cubeState = getSharedCubeState(networkState, index)
-    floatingCubes[index].applySharedState(cubeState)
-    floatingCubes[index].update(deltaSeconds)
-  }
-  if (Array.isArray(ballInfo.xyz) && ballInfo.xyz.length === 3) {
-    // Rendering reads synchronized cache every frame for realtime consistency.
-    sharedBall.position.fromArray(ballInfo.xyz)
-  }
-  if (typeof ballInfo.rgb === 'string') {
-    sharedBall.material.color.set(ballInfo.rgb)
+    const cube = floatingCubes[index]
+    const cubeState = networkState?.cubes?.[index]
+    if (cubeState) {
+      cube.applySharedState(cubeState)
+    }
+    cube.update(deltaSeconds)
   }
   playerSystem.update(
     snapshot.players,

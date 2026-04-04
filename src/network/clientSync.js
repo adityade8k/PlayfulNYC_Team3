@@ -6,6 +6,29 @@ let hasSocketListeners = false
 const pendingMessages = []
 
 const clone = (value) => JSON.parse(JSON.stringify(value))
+const DEFAULT_MULTIPLAYER_PORT = '2026'
+
+const toWebSocketUrl = (value, fallbackProtocol) => {
+  if (typeof value !== 'string' || value.length === 0) return null
+  if (value.startsWith('ws://') || value.startsWith('wss://')) return value
+  if (value.startsWith('http://')) return `ws://${value.slice('http://'.length)}`
+  if (value.startsWith('https://')) return `wss://${value.slice('https://'.length)}`
+  if (value.startsWith('/')) return `${fallbackProtocol}${window.location.host}${value}`
+  return `${fallbackProtocol}${value}`
+}
+
+const resolveSocketUrl = () => {
+  const fallbackProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
+  const wsUrlFromEnv = toWebSocketUrl(import.meta.env.VITE_WS_URL, fallbackProtocol)
+  if (wsUrlFromEnv) return wsUrlFromEnv
+
+  // During local dev, Vite runs on :5173 and the multiplayer server runs on :2026.
+  if (window.location.port === '5173') {
+    return `${fallbackProtocol}${window.location.hostname}:${DEFAULT_MULTIPLAYER_PORT}`
+  }
+
+  return `${fallbackProtocol}${window.location.host}`
+}
 
 const notifyGlobalSubscribers = (name) => {
   const subscribers = globalSubscribers.get(name)
@@ -64,14 +87,14 @@ const handleIncomingMessage = (rawPayload) => {
 export function connectSocket() {
   if (socket) return socket
 
-  // Keep socket origin in lockstep with the page URL for LAN/headset usage.
-  const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
-  socket = new WebSocket(`${protocol}${window.location.host}`)
+  const socketUrl = resolveSocketUrl()
+  socket = new WebSocket(socketUrl)
 
   if (!hasSocketListeners) {
     hasSocketListeners = true
 
     socket.addEventListener('open', () => {
+      console.log(`[clientSync] socket connected: ${socketUrl}`)
       flushPendingMessages()
     })
 
@@ -103,6 +126,12 @@ export function broadcastGlobal(name, value) {
     global: name,
     value,
   })
+}
+
+export function setSynchronized(name, value) {
+  if (typeof name !== 'string' || name.length === 0) return
+  if (typeof value === 'undefined') return
+  applyGlobalUpdate(name, value)
 }
 
 export function subscribeGlobal(name, handler) {

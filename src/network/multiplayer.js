@@ -1,5 +1,10 @@
 import { createDefaultSharedState } from '../../shared/default-state.js'
-import { connectSocket, broadcastGlobal as broadcastGlobalValue, synchronize } from './clientSync.js'
+import {
+  connectSocket,
+  broadcastGlobal as broadcastGlobalValue,
+  setSynchronized,
+  synchronize,
+} from './clientSync.js'
 
 const playerState = {
   players: {},
@@ -23,6 +28,12 @@ const applyPlayerUpdate = (playerId, incomingPlayer) => {
   if (!playerId || !incomingPlayer) return
   playerState.players[playerId] = clone(incomingPlayer)
   notifyStateSubscribers()
+}
+
+const describeSpawnSide = (slotIndex) => {
+  if (slotIndex === 0) return 'left'
+  if (slotIndex === 1) return 'right'
+  return 'unknown'
 }
 
 const applySnapshot = (payload) => {
@@ -49,10 +60,20 @@ const onSocketMessage = (event) => {
 
   if (payload.type === 'welcome' || payload.type === 'snapshot') {
     applySnapshot(payload)
+    if (payload.type === 'welcome' && payload.selfId && payload.players?.[payload.selfId]) {
+      const selfPlayer = payload.players[payload.selfId]
+      console.log(
+        `[multiplayer] connected as #${selfPlayer.connectionOrder ?? '?'} on ${describeSpawnSide(selfPlayer.slotIndex)} spawn`
+      )
+    }
     return
   }
 
   if (payload.type === 'player-join') {
+    const spawnSide = describeSpawnSide(payload.player?.slotIndex)
+    console.log(
+      `[multiplayer] player joined: ${payload.id} (#${payload.player?.connectionOrder ?? '?'}, spawn=${spawnSide})`
+    )
     applyPlayerUpdate(payload.id, payload.player)
     return
   }
@@ -83,7 +104,7 @@ export function connectMultiplayer() {
 }
 
 export function setGlobal(name, value) {
-  synchronize(name, value)
+  setSynchronized(name, value)
 }
 
 export function broadcastGlobal(name, value) {
