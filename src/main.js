@@ -6,6 +6,7 @@ import { createControllerSystem } from './components/controller/index.js'
 import { createHandTrackingSystem } from './components/handtracking/index.js'
 import { createPlayerSystem } from './components/players/index.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
+import { createSmartWatchComponent } from './components/smart-watch/index.js'
 import {
   connectMultiplayer,
   broadcastGlobal,
@@ -19,6 +20,16 @@ import {
   PLAYER_SPAWN_POINTS,
   createDefaultSharedState,
 } from '../shared/default-state.js'
+import { PlayerNeedsSession } from './components/needs/index.js'
+import { ZoneSystem } from './components/needs/zones.js'
+
+const getNeedsPlayerIdForSnapshot = (snapshot) => {
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  if (!selfPlayer) return null
+  if (selfPlayer.slotIndex === 0) return 'player_1'
+  if (selfPlayer.slotIndex === 1) return 'player_2'
+  return null
+}
 
 const sharedState = createDefaultSharedState()
 
@@ -71,6 +82,17 @@ floor.rotation.x = -Math.PI / 2
 floor.position.y = FLOOR_Y
 sharedSceneGroup.add(floor)
 
+const playerNeedsSession = new PlayerNeedsSession()
+playerNeedsSession.addPlayer('player_1')
+playerNeedsSession.addPlayer('player_2')
+playerNeedsSession.start()
+
+const zoneSystem = new ZoneSystem(scene, { debug: true })
+
+setInterval(() => {
+  console.log('needs state:', JSON.stringify(playerNeedsSession.getState(), null, 2))
+}, 3000)
+
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
   const [x, , z] = PLAYER_SPAWN_POINTS[index]
@@ -105,11 +127,17 @@ const handTrackingSystem = createHandTrackingSystem(
   scene,
   interactiveObjects
 )
-const playerSystem = createPlayerSystem(sharedSceneGroup)
-const calibrationSystem = createCalibrationSystem({
-  renderer,
+const playerSystem = createPlayerSystem(scene)
+const smartWatch = createSmartWatchComponent({
   scene,
-  controllers: controllerSystem.controllers,
+  camera,
+  renderer,
+  playerNeedsSession,
+})
+
+window.render_game_to_text = smartWatch.renderGameToText
+arButton.addEventListener('click', () => {
+  smartWatch.maybeAutoStart()
 })
 
 const activeSources = new Set()
@@ -314,6 +342,31 @@ renderer.xr.addEventListener('sessionstart', () => {
   hasAppliedSpawnReferenceSpace = false
   calibrationSystem.beginSession()
   updateLocalPlayer({ isInAr: false })
+  smartWatch.maybeAutoStart()
+  const snapshot = getSnapshot()
+  const selfPlayer = snapshot.players?.[snapshot.selfId]
+  tryApplyLocalSpawnReferenceSpace(snapshot)
+  if (Array.isArray(selfPlayer?.spawnPosition) && selfPlayer.spawnPosition.length === 3) {
+    const spawnSide = selfPlayer.slotIndex === 0 ? 'left' : 'right'
+    console.log(
+      `[client] local spawn assigned: ${spawnSide} (slot=${selfPlayer.slotIndex}, position=${selfPlayer.spawnPosition.join(',')})`
+    )
+    hasLoggedLocalSpawnInfo = true
+  }
+
+  renderer.xr.getCamera().getWorldPosition(localBodyPosition)
+  localBodyPosition.y = Math.max(
+    MIN_BODY_CENTER_Y,
+    localBodyPosition.y - LOCAL_BODY_HEIGHT_FROM_HEAD
+  )
+  renderer.xr.getCamera().getWorldQuaternion(localHeadQuaternion)
+  localHeadEuler.setFromQuaternion(localHeadQuaternion)
+  localBodyRotationY = localHeadEuler.y
+  updateLocalPlayer({
+    isInAr: true,
+    position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
+    rotationY: localBodyRotationY,
+  })
 })
 
 renderer.xr.addEventListener('sessionend', () => {
@@ -331,6 +384,7 @@ renderer.setAnimationLoop(() => {
   timer.update()
   const deltaSeconds = timer.getDelta()
   elapsedSeconds += deltaSeconds
+  const elapsedMilliseconds = elapsedSeconds * 1000
   const networkState = synchronize('sharedState') || sharedState
   const snapshot = getSnapshot()
   tryEnterSharedScene(snapshot)
@@ -375,8 +429,12 @@ renderer.setAnimationLoop(() => {
     isInAr && isSharedSceneActive ? localBodyRotationY : null,
     deltaSeconds
   )
+  smartWatch.setPlayerId(getNeedsPlayerIdForSnapshot(snapshot))
   controllerSystem.update()
   handTrackingSystem.update()
+  smartWatch.update(elapsedMilliseconds, renderer.xr.getFrame?.() || null)
+  playerNeedsSession.update(deltaSeconds)
+  zoneSystem.update(snapshot.players, snapshot.selfId, isInAr ? localBodyPosition : null, playerNeedsSession)
   renderer.render(scene, camera)
 })
 
