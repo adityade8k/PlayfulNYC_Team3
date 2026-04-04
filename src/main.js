@@ -135,7 +135,6 @@ window.render_game_to_text = () =>
     status: 'pending-calibration',
     detail: 'Smart watch and gameplay systems initialize after shared-scene entry.',
   })
-
 const ensurePostCalibrationSystemsInitialized = () => {
   if (!hasStartedNeedsSession) {
     playerNeedsSession.start()
@@ -401,8 +400,6 @@ const tryEnterSharedScene = (snapshot) => {
 controllerSystem.events.addEventListener('selectstart', (event) => {
   const wasCalibrationTrigger = calibrationSystem.onTriggerPress(event.detail.controllerIndex)
   if (wasCalibrationTrigger) {
-    ensurePostCalibrationSystemsInitialized()
-    void smartWatch?.unlockAudio?.()
     return
   }
   onPress(`controller-${event.detail.controllerIndex}`, event.detail)
