@@ -135,7 +135,7 @@ export const createSmartWatchXRSystem = ({
 
   const landlordCall = createLandlordCallController(store, {
     endpoint,
-    autoAdvanceOnError: false,
+    autoAdvanceOnError: true,
     onStatus,
   })
   landlordCall.primeAudio()

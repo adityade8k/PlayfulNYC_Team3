@@ -205,7 +205,17 @@ export const createLandlordCallController = (
         logAudio('play() rejected', {
           message: error instanceof Error ? error.message : String(error),
         })
-        setError(error instanceof Error ? error.message : 'Playback was blocked.')
+        const isAutoplayBlock =
+          error?.name === 'NotAllowedError' ||
+          (typeof error?.message === 'string' &&
+            error.message.toLowerCase().includes('user interaction'))
+        setError(
+          isAutoplayBlock
+            ? 'Audio was blocked until user interaction. Switching to stats.'
+            : error instanceof Error
+              ? error.message
+              : 'Playback was blocked.'
+        )
       })
       .finally(() => {
         startPromise = null

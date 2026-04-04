@@ -162,13 +162,44 @@ const maybeStartLandlordIntro = (snapshot) => {
 
   const players = Object.values(snapshot.players || {})
   const calibratedPlayers = players.filter((player) => player?.isInAr).length
+  const totalPlayers = players.length
+  const fallbackDelaySeconds = 8
+  const hasEnoughConnectedPlayers = totalPlayers >= 2
+
+  if (!hasEnoughConnectedPlayers) {
+    introFallbackDeadlineAt = null
+  }
+
   if (calibratedPlayers < 2) {
+    if (hasEnoughConnectedPlayers && introFallbackDeadlineAt === null) {
+      introFallbackDeadlineAt = elapsedSeconds + fallbackDelaySeconds
+    }
+
+    if (hasEnoughConnectedPlayers && introFallbackDeadlineAt !== null && elapsedSeconds >= introFallbackDeadlineAt) {
+      hasTriggeredLandlordIntro = true
+      lastIntroWaitReason = 'fallback-started'
+      console.log(
+        '[smart-watch][intro] starting landlord call via fallback (connected players ready, calibration flag missing)',
+        {
+          calibratedPlayers,
+          totalPlayers,
+          fallbackDelaySeconds,
+        }
+      )
+      void smartWatch.startIntro()
+      return
+    }
+
     const reason = `waiting-for-players:${calibratedPlayers}/2`
     if (lastIntroWaitReason !== reason) {
       lastIntroWaitReason = reason
       console.log('[smart-watch][intro] waiting for calibrated players', {
         calibratedPlayers,
-        totalPlayers: players.length,
+        totalPlayers,
+        fallbackStartsIn:
+          introFallbackDeadlineAt === null
+            ? null
+            : Math.max(0, Math.ceil(introFallbackDeadlineAt - elapsedSeconds)),
         players: players.map((player) => ({
           id: player?.id || null,
           slotIndex: player?.slotIndex,
@@ -181,10 +212,11 @@ const maybeStartLandlordIntro = (snapshot) => {
   }
 
   hasTriggeredLandlordIntro = true
+  introFallbackDeadlineAt = null
   lastIntroWaitReason = 'started'
   console.log('[smart-watch][intro] starting landlord call', {
     calibratedPlayers,
-    totalPlayers: players.length,
+    totalPlayers,
   })
   void smartWatch.startIntro()
 }
@@ -213,6 +245,7 @@ let hasAppliedSpawnReferenceSpace = false
 let calibrationResult = null
 let isSharedSceneActive = false
 let lastIntroWaitReason = ''
+let introFallbackDeadlineAt = null
 
 const pushSharedState = () => {
   setGlobal('sharedState', sharedState)
@@ -401,6 +434,7 @@ renderer.xr.addEventListener('sessionstart', () => {
   hasAppliedSpawnReferenceSpace = false
   hasTriggeredLandlordIntro = false
   lastIntroWaitReason = ''
+  introFallbackDeadlineAt = null
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -424,6 +458,7 @@ renderer.xr.addEventListener('sessionend', () => {
   hasAppliedSpawnReferenceSpace = false
   hasTriggeredLandlordIntro = false
   lastIntroWaitReason = ''
+  introFallbackDeadlineAt = null
   calibrationSystem.endSession()
   updateLocalPlayer({ isInAr: false })
 })
