@@ -1,58 +1,91 @@
 # Playful NYC XR Starter
 
-Vite + vanilla JavaScript + Three.js starter for an AR passthrough scene.
+Vite + vanilla JavaScript + Three.js XR scene with LAN multiplayer over WebSocket.
 
-## Run
+## Setup
+
+Install all dependencies:
 
 ```bash
 npm install
+```
+
+## Development
+
+Run only Vite:
+
+```bash
 npm run dev
 ```
 
-## Run Multiplayer (client + Socket.IO server)
+Run Vite and the LAN multiplayer server together:
 
 ```bash
 npm run dev:all
 ```
 
-Server runs on `http://localhost:3001` and Vite on `http://localhost:5173`.
+## Build + LAN server
 
-## Build
+Build the client first:
 
 ```bash
 npm run build
 ```
 
-## Deploy to GitHub Pages
+Run the LAN server (serves `dist` and hosts WebSocket on the same port):
 
 ```bash
-npm run deploy
+npm run server
 ```
 
-This publishes the `dist` directory with `gh-pages`.
+Default LAN server URL:
 
-## Modular XR Components
+- Desktop URL: `http://localhost:2026`
+- Headset URL: `http://<computer-ip>:2026`
 
-- `src/components/cube/index.js`: floating and spinning cube example component.
-- `src/components/controller/index.js`: XR controllers + raycasting + `select` events.
-- `src/components/handtracking/index.js`: XR hands + raycasting + pinch click events.
-- `src/components/gltf-loader/index.js`: reusable GLTF loader that exposes:
-  - loaded root object
-  - animation names/actions
-  - animation state transitions via methods and `statechange` event
-- `src/network/multiplayer.js`: shared-global-state multiplayer helper (`connectMultiplayer`, `broadcastGlobal`, `synchronize`, `subscribeState`, `getSnapshot`).
-- `server/index.js`: Node.js + Socket.IO in-memory state server.
-- `shared/default-state.js`: single source of truth for initial shared color/position.
+## Find your LAN IP
 
-`main.js` intentionally does not load a GLTF yet in this step.
+- macOS: run `ipconfig getifaddr en0` (or check System Settings -> Wi-Fi details).
+- Windows: run `ipconfig` and use the IPv4 address from your active adapter.
+- Linux: run `hostname -I` (or `ip addr`) and use your active interface IPv4 address.
 
-## Git LFS model tracking
+## Chrome/WebXR local HTTP flag
 
-Git LFS is configured for:
+When using local HTTP in headset browsers, enable insecure-origin treatment:
 
-- `*.gltf`
-- `*.glb`
-- `*.bin`
-- `*.fbx`
+1. open `chrome://flags/`
+2. enable **Insecure origins treated as secure**
+3. add `http://<computer-ip>:2026`
+4. relaunch browser
 
-When adding new model file types, run `git lfs track "<pattern>"`.
+## Multiplayer + sync notes
+
+- `server/main.js` uses `express` + `ws` on one HTTP(S) server instance.
+- `src/network/clientSync.js` provides shared-key sync helpers:
+  - `connectSocket()`
+  - `broadcastGlobal(name, value)`
+  - `subscribeGlobal(name, handler)`
+  - `synchronize(name, initialValue)`
+- `src/network/multiplayer.js` keeps player snapshot/spawn sync for capsules.
+- `main.js` includes synced `ballInfo` example state:
+  - `ballInfo = { rgb: "red", xyz: [0, 1.5, 0] }`
+
+## Optional HTTPS mode
+
+`server/main.js` automatically switches to HTTPS if cert paths are provided:
+
+- `HTTPS_KEY_PATH=/path/to/key.pem`
+- `HTTPS_CERT_PATH=/path/to/cert.pem`
+
+If those env vars are not set, it cleanly falls back to HTTP.
+
+## Troubleshooting
+
+- Ensure desktop and headset are on the same Wi-Fi/LAN.
+- Check firewall settings and verify port `2026` is allowed inbound.
+- If HTTPS is enabled with invalid certs, mixed-content/cert warnings can block XR or sockets.
+- Accept permission prompts (camera/motion/XR) on both devices.
+- If desktop WebSocket works but headset does not:
+  - verify headset URL is exactly `http://<computer-ip>:2026`
+  - verify the browser flag entry matches the exact origin
+  - confirm no VPN or network isolation is blocking LAN peer traffic.

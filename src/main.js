@@ -20,8 +20,10 @@ import {
 } from '../shared/default-state.js'
 
 const sharedState = createDefaultSharedState()
+const INITIAL_BALL_INFO = { rgb: 'red', xyz: [0, FLOOR_Y + 1.5, 0] }
 
 setGlobal('sharedState', sharedState)
+setGlobal('ballInfo', INITIAL_BALL_INFO)
 connectMultiplayer()
 
 const scene = new THREE.Scene()
@@ -65,6 +67,17 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2
 floor.position.y = FLOOR_Y
 scene.add(floor)
+
+const sharedBall = new THREE.Mesh(
+  new THREE.SphereGeometry(0.11, 20, 20),
+  new THREE.MeshStandardMaterial({
+    color: INITIAL_BALL_INFO.rgb,
+    roughness: 0.45,
+    metalness: 0.08,
+  })
+)
+sharedBall.position.fromArray(INITIAL_BALL_INFO.xyz)
+scene.add(sharedBall)
 
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
@@ -142,6 +155,11 @@ const pushSharedState = () => {
   broadcastGlobal('sharedState')
 }
 
+const pushBallInfo = (ballInfo) => {
+  setGlobal('ballInfo', ballInfo)
+  broadcastGlobal('ballInfo')
+}
+
 const onPress = (sourceId) => {
   activeSources.add(sourceId)
 }
@@ -181,6 +199,14 @@ const onRelease = (sourceId, detail = {}) => {
   ensureTwoCubeSharedState()
   sharedState.cubes[cubeIndex].color = randomHexColor()
   pushSharedState()
+
+  // Example shared object sync pattern: mutate local cache then broadcast.
+  const cubePosition = sharedState.cubes[cubeIndex].position
+  const nextBallInfo = {
+    rgb: sharedState.cubes[cubeIndex].color || 'red',
+    xyz: [cubePosition[0], cubePosition[1] + 0.24, cubePosition[2]],
+  }
+  pushBallInfo(nextBallInfo)
 }
 
 controllerSystem.events.addEventListener('selectstart', (event) =>
@@ -256,6 +282,7 @@ renderer.setAnimationLoop(() => {
   const deltaSeconds = timer.getDelta()
   elapsedSeconds += deltaSeconds
   const networkState = synchronize('sharedState') || sharedState
+  const ballInfo = synchronize('ballInfo', INITIAL_BALL_INFO) || INITIAL_BALL_INFO
   const snapshot = getSnapshot()
 
   if (isInAr) {
@@ -295,6 +322,13 @@ renderer.setAnimationLoop(() => {
     const cubeState = getSharedCubeState(networkState, index)
     floatingCubes[index].applySharedState(cubeState)
     floatingCubes[index].update(deltaSeconds)
+  }
+  if (Array.isArray(ballInfo.xyz) && ballInfo.xyz.length === 3) {
+    // Rendering reads synchronized cache every frame for realtime consistency.
+    sharedBall.position.fromArray(ballInfo.xyz)
+  }
+  if (typeof ballInfo.rgb === 'string') {
+    sharedBall.material.color.set(ballInfo.rgb)
   }
   playerSystem.update(
     snapshot.players,
