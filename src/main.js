@@ -136,11 +136,6 @@ window.render_game_to_text = () =>
     detail: 'Smart watch and gameplay systems initialize after shared-scene entry.',
   })
 const ensurePostCalibrationSystemsInitialized = () => {
-  if (!hasStartedNeedsSession) {
-    playerNeedsSession.start()
-    hasStartedNeedsSession = true
-  }
-
   if (!zoneSystem) {
     zoneSystem = new ZoneSystem(sharedSceneGroup, { debug: true })
   }
@@ -151,6 +146,12 @@ const ensurePostCalibrationSystemsInitialized = () => {
       camera,
       renderer,
       playerNeedsSession,
+      onLandlordFinished: () => {
+        if (hasStartedNeedsSession) return
+        playerNeedsSession.start()
+        hasStartedNeedsSession = true
+        console.log('[needs] session started after landlord intro finished')
+      },
     })
     window.render_game_to_text = smartWatch.renderGameToText
   }
