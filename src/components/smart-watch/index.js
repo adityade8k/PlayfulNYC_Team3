@@ -13,6 +13,7 @@ export const createSmartWatchComponent = ({
   playerNeedsSession,
   playerId = null,
   onLandlordFinished = () => {},
+  onOutcomeFinished = () => {},
 }) =>
   createSmartWatchXRSystem({
     scene,
@@ -21,6 +22,7 @@ export const createSmartWatchComponent = ({
     playerNeedsSession,
     playerId,
     onLandlordFinished,
+    onOutcomeFinished,
     endpoint: resolveLandlordCallEndpoint(),
     onStatus: (message) => {
       console.log(`[smart-watch] ${message}`)

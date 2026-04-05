@@ -82,8 +82,6 @@ const slotOwners = new Array(PLAYER_SPAWN_POINTS.length).fill(null)
 let connectionCounter = 0
 const globals = {
   sharedState: createDefaultSharedState(),
-  // Example shared object used as a reference sync pattern.
-  ballInfo: { rgb: 'red', xyz: [0, 1.5, 0] },
 }
 
 const assignSpawnSlot = (clientId) => {
@@ -139,6 +137,11 @@ wss.on('connection', (ws) => {
     position: clone(spawnPosition),
     rotationY: 0,
     isInAr: false,
+    readyInSharedScene: false,
+    isRightGripDown: false,
+    spawnSideIntent: null,
+    introFinished: false,
+    outcomeFinished: false,
   }
 
   clients.set(id, { ws, player })
@@ -199,6 +202,23 @@ wss.on('connection', (ws) => {
       }
       if (typeof incoming.isInAr === 'boolean') {
         client.player.isInAr = incoming.isInAr
+      }
+      if (typeof incoming.readyInSharedScene === 'boolean') {
+        client.player.readyInSharedScene = incoming.readyInSharedScene
+      }
+      if (typeof incoming.isRightGripDown === 'boolean') {
+        client.player.isRightGripDown = incoming.isRightGripDown
+      }
+      if (incoming.spawnSideIntent === null) {
+        client.player.spawnSideIntent = null
+      } else if (incoming.spawnSideIntent === 'left' || incoming.spawnSideIntent === 'right') {
+        client.player.spawnSideIntent = incoming.spawnSideIntent
+      }
+      if (typeof incoming.introFinished === 'boolean') {
+        client.player.introFinished = incoming.introFinished
+      }
+      if (typeof incoming.outcomeFinished === 'boolean') {
+        client.player.outcomeFinished = incoming.outcomeFinished
       }
       broadcastJson(
         {

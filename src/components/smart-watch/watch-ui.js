@@ -1,4 +1,5 @@
 import { NEED_ORDER } from './state.js'
+import { GAME_CONFIG } from '../../config/game-config.js'
 
 export const createWatchScreenCanvas = () => {
   const canvas = document.createElement('canvas')
@@ -8,6 +9,20 @@ export const createWatchScreenCanvas = () => {
 
   const render = (state, elapsedMs = 0, watchClock = null) => {
     context.clearRect(0, 0, canvas.width, canvas.height)
+    const canvasScale = Math.max(1, Number(GAME_CONFIG.watchUi?.canvasScale) || 1)
+    if (canvasScale !== 1) {
+      context.save()
+      const translateX = (canvas.width * (1 - canvasScale)) / 2
+      const translateY = (canvas.height * (1 - canvasScale)) / 2
+      context.setTransform(
+        canvasScale,
+        0,
+        0,
+        canvasScale,
+        translateX,
+        translateY
+      )
+    }
 
     const background = context.createLinearGradient(0, 0, canvas.width, canvas.height)
     background.addColorStop(0, '#386f7a')
@@ -35,6 +50,10 @@ export const createWatchScreenCanvas = () => {
     } else {
       drawStats(context, state)
     }
+
+    if (canvasScale !== 1) {
+      context.restore()
+    }
   }
 
   return { canvas, context, render }
@@ -46,7 +65,8 @@ export const createLandlordCallController = (
     endpoint = '/api/landlord-call',
     autoAdvanceOnError = false,
     onStatus = () => {},
-    onFinished = () => {},
+    onIntroFinished = () => {},
+    onOutcomeFinished = () => {},
   } = {}
 ) => {
   const audio = new Audio()
@@ -94,11 +114,12 @@ export const createLandlordCallController = (
     store.setScreen('stats')
     if (activeCallKind === 'outcome') {
       onStatus('Landlord outcome call finished.')
+      onOutcomeFinished()
       return
     }
     onStatus('Landlord call finished.')
     onStatus('Landlord intro finished. Stats screen is live.')
-    onFinished()
+    onIntroFinished()
   }
 
   const setError = (message) => {
@@ -334,6 +355,14 @@ export const createLandlordCallController = (
     startOutcomeCall,
     replayCall: startCall,
     skipToStats: advanceToStats,
+    stopPlayback() {
+      clearTimer()
+      audio.pause()
+      audio.currentTime = 0
+      revokeObjectUrl()
+      activeCallKind = 'intro'
+      startPromise = null
+    },
     dispose() {
       clearTimer()
       audio.pause()

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { NEEDS_CONFIG, getWatchClockFromElapsed } from '../needs/index.js'
+import { GAME_CONFIG } from '../../config/game-config.js'
 import { attachSmartWatchGlobals, createSmartWatchStore } from './state.js'
 import {
   createLandlordCallController,
@@ -18,6 +19,7 @@ export const createSmartWatchXRSystem = ({
   secureContextMessage = true,
   onStatus = () => {},
   onLandlordFinished = () => {},
+  onOutcomeFinished = () => {},
 } = {}) => {
   if (!scene || !camera || !renderer) {
     throw new Error('createSmartWatchXRSystem requires scene, camera, and renderer.')
@@ -25,6 +27,10 @@ export const createSmartWatchXRSystem = ({
 
   const store = createSmartWatchStore(playerNeedsSession, playerId)
   attachSmartWatchGlobals(store)
+  const watchWorldScaleMultiplier = Math.max(
+    0.5,
+    Number(GAME_CONFIG.watchUi?.worldScaleMultiplier) || 1
+  )
 
   const watchScreen = createWatchScreenCanvas()
   const screenTexture = new THREE.CanvasTexture(watchScreen.canvas)
@@ -124,8 +130,8 @@ export const createSmartWatchXRSystem = ({
   watchAnchor.add(previewForearm)
 
   const desktopPreviewAnchor = new THREE.Group()
-  desktopPreviewAnchor.position.set(-0.12, -0.03, -0.38)
-  desktopPreviewAnchor.rotation.set(0.06, -0.04, -0.46)
+  desktopPreviewAnchor.position.fromArray(GAME_CONFIG.watchOffsets.preview.anchorPosition)
+  desktopPreviewAnchor.rotation.fromArray(GAME_CONFIG.watchOffsets.preview.anchorRotation)
   camera.add(desktopPreviewAnchor)
   scene.add(camera)
 
@@ -149,7 +155,8 @@ export const createSmartWatchXRSystem = ({
     endpoint,
     autoAdvanceOnError: true,
     onStatus,
-    onFinished: onLandlordFinished,
+    onIntroFinished: onLandlordFinished,
+    onOutcomeFinished,
   })
   landlordCall.primeAudio()
 
@@ -165,16 +172,20 @@ export const createSmartWatchXRSystem = ({
 
   const applyWatchMode = (mode) => {
     if (mode === 'xr-hand' || mode === 'xr-controller') {
-      watchModel.scale.setScalar(0.095)
-      watchModel.position.set(0.016, 0.03, -0.004)
-      watchModel.rotation.set(Math.PI / 2, Math.PI, -1.18)
+      watchModel.scale.setScalar(
+        GAME_CONFIG.watchOffsets.xr.scale * watchWorldScaleMultiplier
+      )
+      watchModel.position.fromArray(GAME_CONFIG.watchOffsets.xr.position)
+      watchModel.rotation.fromArray(GAME_CONFIG.watchOffsets.xr.rotation)
       previewForearm.visible = false
       return
     }
 
-    watchModel.scale.setScalar(0.22)
-    watchModel.position.set(0, 0, 0)
-    watchModel.rotation.set(0.25, 0.12, -0.28)
+    watchModel.scale.setScalar(
+      GAME_CONFIG.watchOffsets.preview.scale * watchWorldScaleMultiplier
+    )
+    watchModel.position.fromArray(GAME_CONFIG.watchOffsets.preview.position)
+    watchModel.rotation.fromArray(GAME_CONFIG.watchOffsets.preview.rotation)
     previewForearm.visible = true
     previewForearm.scale.setScalar(0.3)
     previewForearm.position.set(-0.18, -0.03, -0.03)
@@ -281,6 +292,13 @@ export const createSmartWatchXRSystem = ({
     },
     maybeAutoStart() {
       void landlordCall.startCall()
+    },
+    setVisible(visible) {
+      watchAnchor.visible = Boolean(visible)
+    },
+    resetRoundState() {
+      landlordCall.stopPlayback()
+      store.reset()
     },
     update(time, frame) {
       elapsedMs = time

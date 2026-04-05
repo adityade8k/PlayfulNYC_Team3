@@ -34,6 +34,7 @@ export function createControllerSystem(renderer, scene, interactiveObjects = [])
   const controllers = []
   const controllerGrips = []
   const selecting = [false, false]
+  const latestIntersections = [[], []]
 
   for (let index = 0; index < 2; index += 1) {
     const controller = renderer.xr.getController(index)
@@ -55,6 +56,7 @@ export function createControllerSystem(renderer, scene, interactiveObjects = [])
 
     controller.addEventListener('select', () => {
       const intersections = intersectFromInput(raycaster, controller, interactiveObjects)
+      latestIntersections[index] = intersections
       const { origin, direction } = getRayFromInput(controller)
       events.dispatchEvent(
         new CustomEvent('select', {
@@ -65,6 +67,7 @@ export function createControllerSystem(renderer, scene, interactiveObjects = [])
     controller.addEventListener('selectstart', () => {
       selecting[index] = true
       const intersections = intersectFromInput(raycaster, controller, interactiveObjects)
+      latestIntersections[index] = intersections
       const { origin, direction } = getRayFromInput(controller)
       events.dispatchEvent(
         new CustomEvent('selectstart', {
@@ -75,6 +78,7 @@ export function createControllerSystem(renderer, scene, interactiveObjects = [])
     controller.addEventListener('selectend', () => {
       selecting[index] = false
       const intersections = intersectFromInput(raycaster, controller, interactiveObjects)
+      latestIntersections[index] = intersections
       const { origin, direction } = getRayFromInput(controller)
       events.dispatchEvent(
         new CustomEvent('selectend', {
@@ -96,6 +100,7 @@ export function createControllerSystem(renderer, scene, interactiveObjects = [])
       for (const controller of controllers) {
         const index = controller.userData.controllerIndex
         const intersections = intersectFromInput(raycaster, controller, interactiveObjects)
+        latestIntersections[index] = intersections
         const ray = controller.getObjectByName('ray')
         if (ray) {
           ray.material.color.set(intersections.length > 0 ? 0xff44cc : 0x66ccff)
@@ -109,6 +114,10 @@ export function createControllerSystem(renderer, scene, interactiveObjects = [])
           )
         }
       }
+    },
+    getLatestIntersections(controllerIndex) {
+      if (controllerIndex !== 0 && controllerIndex !== 1) return []
+      return latestIntersections[controllerIndex] || []
     },
   }
 }

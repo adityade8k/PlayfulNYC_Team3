@@ -1,9 +1,12 @@
 import * as THREE from 'three'
+import { GAME_CONFIG } from '../../config/game-config.js'
 
-const REMOTE_COLOR = '#71d8ff'
-const BODY_RADIUS = 0.14
-const BODY_LENGTH = 0.65
-const HEAD_RADIUS = 0.11
+const {
+  color: REMOTE_COLOR,
+  bodyRadius: BODY_RADIUS,
+  bodyLength: BODY_LENGTH,
+  headRadius: HEAD_RADIUS,
+} = GAME_CONFIG.playerVisual.capsule
 const HEAD_OFFSET_Y = BODY_LENGTH / 2 + BODY_RADIUS + HEAD_RADIUS * 0.8
 
 export function createPlayerSystem(scene) {
@@ -55,15 +58,16 @@ export function createPlayerSystem(scene) {
     update(
       players = {},
       selfId = null,
-      localBodyPosition = null,
-      localBodyRotationY = null,
-      deltaSeconds = 1 / 60
+      _localBodyPosition = null,
+      _localBodyRotationY = null,
+      deltaSeconds = 1 / 60,
+      remoteCapsulesVisible = true
     ) {
       const seen = new Set()
       const lerpAlpha = 1 - Math.exp(-12 * deltaSeconds)
 
       for (const [playerId, player] of Object.entries(players)) {
-        if (!player.isInAr || playerId === selfId) {
+        if (!remoteCapsulesVisible || !player.isInAr || playerId === selfId) {
           removePlayerVisual(playerId)
           continue
         }

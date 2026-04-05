@@ -3,6 +3,7 @@ export const NEEDS_UI_CONFIG = {
   poop: { label: 'Poop', icon: '\u{1F6BD}' },
   shower: { label: 'Hygiene', icon: '\u{1F9FC}' },
   sleep: { label: 'Sleep', icon: '\u{1F319}' },
+  fun: { label: 'Fun', icon: '\u{1F389}' },
 }
 
 export const NEED_ORDER = Object.keys(NEEDS_UI_CONFIG)
