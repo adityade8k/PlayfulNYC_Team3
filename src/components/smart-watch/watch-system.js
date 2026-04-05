@@ -27,6 +27,10 @@ export const createSmartWatchXRSystem = ({
 
   const store = createSmartWatchStore(playerNeedsSession, playerId)
   attachSmartWatchGlobals(store)
+  const watchWorldScaleMultiplier = Math.max(
+    0.5,
+    Number(GAME_CONFIG.watchUi?.worldScaleMultiplier) || 1
+  )
 
   const watchScreen = createWatchScreenCanvas()
   const screenTexture = new THREE.CanvasTexture(watchScreen.canvas)
@@ -168,14 +172,18 @@ export const createSmartWatchXRSystem = ({
 
   const applyWatchMode = (mode) => {
     if (mode === 'xr-hand' || mode === 'xr-controller') {
-      watchModel.scale.setScalar(GAME_CONFIG.watchOffsets.xr.scale)
+      watchModel.scale.setScalar(
+        GAME_CONFIG.watchOffsets.xr.scale * watchWorldScaleMultiplier
+      )
       watchModel.position.fromArray(GAME_CONFIG.watchOffsets.xr.position)
       watchModel.rotation.fromArray(GAME_CONFIG.watchOffsets.xr.rotation)
       previewForearm.visible = false
       return
     }
 
-    watchModel.scale.setScalar(GAME_CONFIG.watchOffsets.preview.scale)
+    watchModel.scale.setScalar(
+      GAME_CONFIG.watchOffsets.preview.scale * watchWorldScaleMultiplier
+    )
     watchModel.position.fromArray(GAME_CONFIG.watchOffsets.preview.position)
     watchModel.rotation.fromArray(GAME_CONFIG.watchOffsets.preview.rotation)
     previewForearm.visible = true

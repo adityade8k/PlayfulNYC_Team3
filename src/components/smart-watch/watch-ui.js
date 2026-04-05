@@ -1,4 +1,5 @@
 import { NEED_ORDER } from './state.js'
+import { GAME_CONFIG } from '../../config/game-config.js'
 
 export const createWatchScreenCanvas = () => {
   const canvas = document.createElement('canvas')
@@ -8,6 +9,20 @@ export const createWatchScreenCanvas = () => {
 
   const render = (state, elapsedMs = 0, watchClock = null) => {
     context.clearRect(0, 0, canvas.width, canvas.height)
+    const canvasScale = Math.max(1, Number(GAME_CONFIG.watchUi?.canvasScale) || 1)
+    if (canvasScale !== 1) {
+      context.save()
+      const translateX = (canvas.width * (1 - canvasScale)) / 2
+      const translateY = (canvas.height * (1 - canvasScale)) / 2
+      context.setTransform(
+        canvasScale,
+        0,
+        0,
+        canvasScale,
+        translateX,
+        translateY
+      )
+    }
 
     const background = context.createLinearGradient(0, 0, canvas.width, canvas.height)
     background.addColorStop(0, '#386f7a')
@@ -34,6 +49,10 @@ export const createWatchScreenCanvas = () => {
       drawIncomingCall(context, state, elapsedMs)
     } else {
       drawStats(context, state)
+    }
+
+    if (canvasScale !== 1) {
+      context.restore()
     }
   }
 
