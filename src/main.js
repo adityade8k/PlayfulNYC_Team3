@@ -207,6 +207,7 @@ let localOutcomeCallStarted = false
 let localIntroFinished = false
 let localOutcomeFinished = false
 let localRightGripDown = false
+let previousLocalRightGripDown = false
 let hasPlayedNightSound = false
 let hasPlayedNextMorningSound = false
 let previousNeedsCompletionPercent = 0
@@ -215,6 +216,10 @@ let lastBroadcastZoneOccupancy = normalizeRoundState().zoneOccupancy
 let outcomeFallbackStartedAt = null
 let sleepEffectTargetOpacity = 0
 const localInteractionDrivenStates = {
+  toilet: false,
+  shower: false,
+}
+const localInteractionDesiredStates = {
   toilet: false,
   shower: false,
 }
@@ -232,6 +237,19 @@ const nightAudio = new Audio('/sounds/cricket.mp3')
 nightAudio.preload = 'auto'
 const nextMorningAudio = new Audio('/sounds/bird.mp3')
 nextMorningAudio.preload = 'auto'
+const interactionAudioByNeed = {
+  hunger: new Audio('/kitchen.mp3'),
+  poop: new Audio('/poop.mp3'),
+  shower: new Audio('/shower.mp3'),
+  sleep: new Audio('/snore.mp3'),
+  fun: new Audio('/game.mp3'),
+}
+for (const audio of Object.values(interactionAudioByNeed)) {
+  audio.preload = 'auto'
+  audio.loop = true
+}
+let activeInteractionAudioNeed = null
+let lastInteractionAudioAttemptAt = 0
 const lastZoneUsageByPlayer = {
   player_1: null,
   player_2: null,
@@ -278,9 +296,10 @@ const setEnvironmentAnimationState = async (stateName, nextValue, source) => {
   return true
 }
 
-const syncLocalInteractionDrivenState = (stateName, shouldBeOn) => {
+const flushLocalInteractionDrivenState = (stateName) => {
   if (!(stateName in localInteractionDrivenStates)) return
   if (localInteractionStateInFlight[stateName]) return
+  const shouldBeOn = Boolean(localInteractionDesiredStates[stateName])
   if (localInteractionDrivenStates[stateName] === shouldBeOn) return
   localInteractionStateInFlight[stateName] = true
   void setEnvironmentAnimationState(
@@ -293,7 +312,16 @@ const syncLocalInteractionDrivenState = (stateName, shouldBeOn) => {
     }
   }).finally(() => {
     localInteractionStateInFlight[stateName] = false
+    if (localInteractionDrivenStates[stateName] !== localInteractionDesiredStates[stateName]) {
+      flushLocalInteractionDrivenState(stateName)
+    }
   })
+}
+
+const syncLocalInteractionDrivenState = (stateName, shouldBeOn) => {
+  if (!(stateName in localInteractionDrivenStates)) return
+  localInteractionDesiredStates[stateName] = Boolean(shouldBeOn)
+  flushLocalInteractionDrivenState(stateName)
 }
 
 const releaseLocalInteractionDrivenStates = () => {
@@ -563,6 +591,58 @@ const playMilestoneSound = async (audio) => {
   }
 }
 
+const stopInteractionAudio = () => {
+  for (const audio of Object.values(interactionAudioByNeed)) {
+    audio.pause()
+    audio.currentTime = 0
+  }
+  activeInteractionAudioNeed = null
+}
+
+const syncInteractionAudio = async (needKey) => {
+  const normalizedNeedKey = typeof needKey === 'string' ? needKey : null
+  if (!normalizedNeedKey) {
+    stopInteractionAudio()
+    return
+  }
+
+  const audio = interactionAudioByNeed[normalizedNeedKey]
+  if (!audio) {
+    stopInteractionAudio()
+    return
+  }
+  if (activeInteractionAudioNeed !== normalizedNeedKey) {
+    stopInteractionAudio()
+    activeInteractionAudioNeed = normalizedNeedKey
+  }
+  if (!audio.paused) return
+  const now = Date.now()
+  if (now - lastInteractionAudioAttemptAt < 250) return
+  lastInteractionAudioAttemptAt = now
+  try {
+    await audio.play()
+  } catch {
+    // Ignore blocked autoplay in headset browser.
+  }
+}
+
+const replayInteractionAudioOnGripPress = async (needKey) => {
+  const normalizedNeedKey = typeof needKey === 'string' ? needKey : null
+  if (!normalizedNeedKey) return
+  const audio = interactionAudioByNeed[normalizedNeedKey]
+  if (!audio) return
+  if (activeInteractionAudioNeed !== normalizedNeedKey) {
+    stopInteractionAudio()
+    activeInteractionAudioNeed = normalizedNeedKey
+  }
+  audio.currentTime = 0
+  try {
+    await audio.play()
+  } catch {
+    // Ignore blocked autoplay in headset browser.
+  }
+}
+
 const setRoundPhase = (nextPhase, snapshot, { needsSummary = undefined } = {}) => {
   if (!isHost(snapshot)) return
   if (sharedState.round.phase === nextPhase && typeof needsSummary === 'undefined') return
@@ -744,11 +824,13 @@ const beginCalibrationFlow = (snapshot) => {
   localIntroFinished = false
   localOutcomeFinished = false
   localRightGripDown = false
+  previousLocalRightGripDown = false
   hasPlayedNightSound = false
   hasPlayedNextMorningSound = false
   previousNeedsCompletionPercent = 0
   outcomeFallbackStartedAt = null
   sleepEffectTargetOpacity = 0
+  stopInteractionAudio()
   releaseLocalInteractionDrivenStates()
   zoneSystem.resetDebugVisuals()
 
@@ -843,6 +925,7 @@ const handleRoundPhaseChange = (phase, snapshot) => {
     hasPlayedNextMorningSound = false
     previousNeedsCompletionPercent = 0
     sleepEffectTargetOpacity = 0
+    stopInteractionAudio()
     if (SKIP_INTRO_CALL_AND_SHOW_STATS && isSharedSceneActive) {
       smartWatch.showStats(sharedState.round.needsSummary || null)
       localIntroCallStarted = true
@@ -860,6 +943,7 @@ const handleRoundPhaseChange = (phase, snapshot) => {
     localOutcomeFinished = false
     outcomeFallbackStartedAt = elapsedSeconds + 20
     sleepEffectTargetOpacity = 0
+    stopInteractionAudio()
     releaseLocalInteractionDrivenStates()
     zoneSystem.resetDebugVisuals()
     updateLocalPlayer({ outcomeFinished: false })
@@ -892,6 +976,7 @@ renderer.xr.addEventListener('sessionend', () => {
   calibrationSystem.endSession()
   interactionSystem.clearActiveNeeds()
   sleepEffectTargetOpacity = 0
+  stopInteractionAudio()
   releaseLocalInteractionDrivenStates()
   zoneSystem.resetDebugVisuals()
   lastZoneUsageByPlayer.player_1 = null
@@ -903,6 +988,7 @@ renderer.xr.addEventListener('sessionend', () => {
     introFinished: false,
     outcomeFinished: false,
   })
+  previousLocalRightGripDown = false
 })
 
 const timer = new THREE.Timer()
@@ -948,6 +1034,7 @@ renderer.setAnimationLoop(() => {
   }
 
   localRightGripDown = isInAr && isSharedSceneActive ? getRightGripPressed() : false
+  const gripJustPressed = localRightGripDown && !previousLocalRightGripDown
 
   if (isInAr && elapsedSeconds - lastPoseUpdateAt > 1 / GAME_CONFIG.round.poseBroadcastHz) {
     updateLocalPlayer({
@@ -1086,6 +1173,10 @@ renderer.setAnimationLoop(() => {
     )
     sleepEffectTargetOpacity =
       localActiveNeed === 'sleep' && localActiveZoneId === 'zone_2' ? 0.78 : 0
+    if (gripJustPressed) {
+      void replayInteractionAudioOnGripPress(localActiveNeed)
+    }
+    void syncInteractionAudio(localActiveNeed)
 
     if (host) {
       const nextOccupancy = resolved.occupancy
@@ -1132,6 +1223,7 @@ renderer.setAnimationLoop(() => {
   } else {
     interactionSystem.clearActiveNeeds()
     sleepEffectTargetOpacity = 0
+    stopInteractionAudio()
     releaseLocalInteractionDrivenStates()
     zoneSystem.resetDebugVisuals()
     lastZoneUsageByPlayer.player_1 = null
@@ -1160,6 +1252,7 @@ renderer.setAnimationLoop(() => {
   sleepEffectMesh.material.opacity +=
     (sleepEffectTargetOpacity - sleepEffectMesh.material.opacity) * sleepOpacityLerp
   sleepEffectMesh.visible = sleepEffectMesh.material.opacity > 0.02
+  previousLocalRightGripDown = localRightGripDown
 
   renderer.render(scene, camera)
 })

@@ -11,11 +11,14 @@ export function createFloatingCube({
   size = 0.15,
   spinSpeed = 1.2,
 } = {}) {
-  const geometry = new THREE.BoxGeometry(size, size, size)
+  const radius = Math.max(0.02, size * 0.5)
+  const geometry = new THREE.SphereGeometry(radius, 28, 18)
   const material = new THREE.MeshStandardMaterial({
     color: COLOR_MAP.red,
-    roughness: 0.35,
-    metalness: 0.15,
+    emissive: COLOR_MAP.red,
+    emissiveIntensity: 1.2,
+    roughness: 0.2,
+    metalness: 0.05,
   })
 
   const mesh = new THREE.Mesh(geometry, material)
@@ -46,6 +49,7 @@ export function createFloatingCube({
         sharedState.color ??
         COLOR_MAP.red
       material.color.set(color)
+      material.emissive.set(color)
     },
   }
 }

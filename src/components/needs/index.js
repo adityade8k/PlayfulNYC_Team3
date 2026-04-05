@@ -23,16 +23,16 @@ export const NEEDS_CONFIG = {
     poop:   1.2,            // medium
     shower: 1.6,            // slow — you can hold it
     sleep:  1.4, 
-    fun: 0.16           // very slow — long cycle
+    fun: 1.9          // very slow — long cycle
   },
 
   // How fast each bar fills while player is in the zone
   fillRates: {
-    hunger: 60,             // eating is fast
-    poop:   60,             // bathroom takes a moment
-    shower: 60,             // shower takes longer
-    sleep:  60,
-    fun: 60               // steady fun recovery
+    hunger: 40,             // eating is fast
+    poop:   40,             // bathroom takes a moment
+    shower: 40,             // shower takes longer
+    sleep:  40,
+    fun: 40               // steady fun recovery
   },
 
   // Thresholds for bar color and scoring (0–100)
@@ -47,6 +47,10 @@ const toPositiveNumber = (value, fallback) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
+const hasNeedKey = (needs, needKey) =>
+  Object.prototype.hasOwnProperty.call(needs, needKey)
+const NEED_KEYS = ['hunger', 'poop', 'shower', 'sleep', 'fun']
+const randomInitialNeedValue = () => 40 + Math.floor(Math.random() * 61)
 
 const formatHourMinute = (hour24, minute) => {
   const period = hour24 >= 12 ? 'PM' : 'AM'
@@ -149,7 +153,7 @@ export class PlayerNeeds {
     }
 
     // Current bar values (0–100)
-    this.needs = { hunger: 100, poop: 100, shower: 100, sleep: 100, fun: 100 }
+    this.needs = this._createInitialNeedsState()
 
     // Which zone the player is currently standing in (null = none)
     // Set this from your XR collider / zone detection
@@ -212,7 +216,7 @@ export class PlayerNeeds {
 
   /** Player entered a need zone (e.g. stepped into kitchen area) */
   enterZone(zoneKey) {
-    this.activeZone = this.needs[zoneKey] ? zoneKey : null
+    this.activeZone = hasNeedKey(this.needs, zoneKey) ? zoneKey : null
   }
 
   /** Player left a need zone */
@@ -221,7 +225,7 @@ export class PlayerNeeds {
   }
 
   setActiveNeed(needKeyOrNull) {
-    if (!needKeyOrNull || !this.needs[needKeyOrNull]) {
+    if (!needKeyOrNull || !hasNeedKey(this.needs, needKeyOrNull)) {
       this.activeZone = null
       return
     }
@@ -323,10 +327,14 @@ export class PlayerNeeds {
     this.onShameEvent?.(this.playerId, event)
   }
 
+  _createInitialNeedsState() {
+    return Object.fromEntries(
+      NEED_KEYS.map((needKey) => [needKey, randomInitialNeedValue()])
+    )
+  }
+
   reset() {
-    for (const needKey of Object.keys(this.needs)) {
-      this.needs[needKey] = 100
-    }
+    this.needs = this._createInitialNeedsState()
     this.activeZone = null
     this.shameEvents = []
     this._history = []
