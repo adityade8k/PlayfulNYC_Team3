@@ -190,7 +190,7 @@ const ensurePostCalibrationSystemsInitialized = () => {
   }
 
   if (!interactionSystem) {
-    interactionSystem = new InteractionSystem(playerNeedsSession)
+    interactionSystem = new InteractionSystem(playerNeedsSession, broadcastGlobal)
     window.interactionSystem = interactionSystem
   }
 
@@ -658,6 +658,8 @@ renderer.setAnimationLoop(() => {
     zoneSystem.update(snapshot.players, snapshot.selfId, localBodyPosition, playerNeedsSession)
   }
   if (isInAr && isSharedSceneActive && interactionSystem) {
+    const remoteApartmentState = synchronize('apartmentState')
+    if (remoteApartmentState) interactionSystem.applyRemoteState(remoteApartmentState)
     interactionSystem.update()
   }
   renderer.render(scene, camera)
