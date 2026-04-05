@@ -85,15 +85,35 @@ sharedSceneGroup.add(floor)
 const playerNeedsSession = new PlayerNeedsSession()
 playerNeedsSession.addPlayer('player_1')
 playerNeedsSession.addPlayer('player_2')
-playerNeedsSession.onSessionEnd = (summaries) => {
-  console.log('[needs] session ended, starting landlord verdict call', summaries)
-  if (!smartWatch) return
-  void smartWatch.startOutcomeCall(summaries)
-}
 
 playerNeedsSession.onSessionEnd = (summaries) => {
   console.log('[needs] game over', summaries)
-  broadcastGlobal('needsSummary', summaries)
+
+  const teamScore = Math.round(
+    (summaries[0].overallScore + summaries[1].overallScore) / 2
+  )
+
+  const teamStars = teamScore >= 80 ? 3
+                  : teamScore >= 50 ? 2
+                  : teamScore >= 25 ? 1
+                  : 0
+
+  const allShameEvents = summaries.flatMap(s =>
+    Object.entries(s.shameSummary || {}).map(([need, data]) => ({
+      playerId: s.playerId,
+      need,
+      count: data.count,
+      message: data.messages[0],
+    }))
+  )
+
+  const endData = { summaries, teamScore, teamStars, allShameEvents }
+
+  console.log('[needs] end data', endData)
+  broadcastGlobal('needsSummary', endData)
+
+  // Llamar al outcome call del smartwatch (compañera)
+  if (smartWatch) void smartWatch.startOutcomeCall(summaries)
 }
 
 const spawnMarkerColors = ['#44ff88', '#4488ff']
