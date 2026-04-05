@@ -63,6 +63,7 @@ export function createHandTrackingSystem(renderer, scene, interactiveObjects = [
   const handFactory = new XRHandModelFactory()
   const hands = []
   const pinchState = [false, false]
+  const latestIntersections = [[], []]
 
   for (let index = 0; index < 2; index += 1) {
     const hand = renderer.xr.getHand(index)
@@ -81,6 +82,7 @@ export function createHandTrackingSystem(renderer, scene, interactiveObjects = [
         applyHandOpacity(hand, 0.3)
         const handIndex = hand.userData.handIndex
         const intersections = intersectFromInput(raycaster, hand, interactiveObjects)
+        latestIntersections[handIndex] = intersections
         const ray = hand.getObjectByName('ray')
         if (ray) {
           ray.material.color.set(intersections.length > 0 ? 0xffcc33 : 0x99ff66)
@@ -120,6 +122,10 @@ export function createHandTrackingSystem(renderer, scene, interactiveObjects = [
 
         pinchState[handIndex] = isPinching
       }
+    },
+    getLatestIntersections(handIndex) {
+      if (handIndex !== 0 && handIndex !== 1) return []
+      return latestIntersections[handIndex] || []
     },
   }
 }

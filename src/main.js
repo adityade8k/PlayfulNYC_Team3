@@ -45,6 +45,10 @@ import {
 } from './config/game-config.js'
 
 const clone = (value) => JSON.parse(JSON.stringify(value))
+const SPAWN_SIDE_TO_SLOT_INDEX = Object.freeze({
+  left: 0,
+  right: 1,
+})
 
 const getNeedsPlayerIdFromSlot = (slotIndex) => {
   if (slotIndex === 0) return 'player_1'
@@ -63,6 +67,21 @@ const INTERACTIVE_CUBE_STATE_NAMES = new Set(['kitchen', 'bed1', 'bed2'])
 
 const normalizeRoundState = (incoming = null) => {
   const fallback = createDefaultRoundState()
+  const incomingSpawnSelection =
+    incoming && typeof incoming === 'object' && incoming.spawnSelection
+      ? incoming.spawnSelection
+      : null
+  const rawPlayerSides =
+    incomingSpawnSelection && typeof incomingSpawnSelection.playerSides === 'object'
+      ? incomingSpawnSelection.playerSides
+      : {}
+  const normalizedPlayerSides = {}
+  for (const [playerId, side] of Object.entries(rawPlayerSides)) {
+    if (side === 'left' || side === 'right') {
+      normalizedPlayerSides[playerId] = side
+    }
+  }
+  const takenSides = new Set(Object.values(normalizedPlayerSides))
   if (!incoming || typeof incoming !== 'object') return fallback
   return {
     phase:
@@ -72,6 +91,11 @@ const normalizeRoundState = (incoming = null) => {
     zoneOccupancy: Object.fromEntries(
       ZONE_IDS.map((zoneId) => [zoneId, incoming.zoneOccupancy?.[zoneId] || null])
     ),
+    spawnSelection: {
+      leftTaken: takenSides.has('left'),
+      rightTaken: takenSides.has('right'),
+      playerSides: normalizedPlayerSides,
+    },
     needsSummary: incoming.needsSummary || null,
     version:
       Number.isFinite(Number(incoming.version)) && Number(incoming.version) >= 0
@@ -207,7 +231,6 @@ let localOutcomeCallStarted = false
 let localIntroFinished = false
 let localOutcomeFinished = false
 let localRightGripDown = false
-let previousLocalRightGripDown = false
 let hasPlayedNightSound = false
 let hasPlayedNextMorningSound = false
 let previousNeedsCompletionPercent = 0
@@ -237,19 +260,34 @@ const nightAudio = new Audio('/sounds/cricket.mp3')
 nightAudio.preload = 'auto'
 const nextMorningAudio = new Audio('/sounds/bird.mp3')
 nextMorningAudio.preload = 'auto'
-const interactionAudioByNeed = {
+const interactionLoopAudioByType = {
   hunger: new Audio('/kitchen.mp3'),
   poop: new Audio('/poop.mp3'),
   shower: new Audio('/shower.mp3'),
   sleep: new Audio('/snore.mp3'),
   fun: new Audio('/game.mp3'),
 }
-for (const audio of Object.values(interactionAudioByNeed)) {
+const interactionOneShotAudio = {
+  drawer: new Audio('/drawer.mp3'),
+  curtain: new Audio('/curtain.mp3'),
+}
+const interactionSequenceByType = {
+  hunger: ['drawer'],
+  poop: [],
+  sleep: [],
+  shower: ['drawer', 'curtain'],
+  fun: [],
+}
+for (const audio of Object.values(interactionLoopAudioByType)) {
   audio.preload = 'auto'
   audio.loop = true
 }
-let activeInteractionAudioNeed = null
-let lastInteractionAudioAttemptAt = 0
+for (const audio of Object.values(interactionOneShotAudio)) {
+  audio.preload = 'auto'
+  audio.loop = false
+}
+let currentInteractionType = null
+let interactionAudioSequenceToken = 0
 const lastZoneUsageByPlayer = {
   player_1: null,
   player_2: null,
@@ -451,6 +489,7 @@ const calibrationSystem = createCalibrationSystem({
   scene,
   controllers: controllerSystem.controllers,
 })
+interactiveObjects.push(...calibrationSystem.getSpawnSelectionInteractiveObjects())
 const zoneSystem = new ZoneSystem(sharedSceneGroup, {
   debug: GAME_CONFIG.debug.zonesVisible,
 })
@@ -592,55 +631,97 @@ const playMilestoneSound = async (audio) => {
 }
 
 const stopInteractionAudio = () => {
-  for (const audio of Object.values(interactionAudioByNeed)) {
+  interactionAudioSequenceToken += 1
+  for (const audio of Object.values(interactionLoopAudioByType)) {
     audio.pause()
     audio.currentTime = 0
   }
-  activeInteractionAudioNeed = null
+  for (const audio of Object.values(interactionOneShotAudio)) {
+    audio.pause()
+    audio.currentTime = 0
+  }
+  currentInteractionType = null
 }
 
-const syncInteractionAudio = async (needKey) => {
-  const normalizedNeedKey = typeof needKey === 'string' ? needKey : null
-  if (!normalizedNeedKey) {
-    stopInteractionAudio()
-    return
-  }
-
-  const audio = interactionAudioByNeed[normalizedNeedKey]
-  if (!audio) {
-    stopInteractionAudio()
-    return
-  }
-  if (activeInteractionAudioNeed !== normalizedNeedKey) {
-    stopInteractionAudio()
-    activeInteractionAudioNeed = normalizedNeedKey
-  }
-  if (!audio.paused) return
-  const now = Date.now()
-  if (now - lastInteractionAudioAttemptAt < 250) return
-  lastInteractionAudioAttemptAt = now
-  try {
-    await audio.play()
-  } catch {
-    // Ignore blocked autoplay in headset browser.
-  }
-}
-
-const replayInteractionAudioOnGripPress = async (needKey) => {
-  const normalizedNeedKey = typeof needKey === 'string' ? needKey : null
-  if (!normalizedNeedKey) return
-  const audio = interactionAudioByNeed[normalizedNeedKey]
+const playAudioWithRetry = async (audio) => {
   if (!audio) return
-  if (activeInteractionAudioNeed !== normalizedNeedKey) {
-    stopInteractionAudio()
-    activeInteractionAudioNeed = normalizedNeedKey
-  }
-  audio.currentTime = 0
   try {
     await audio.play()
   } catch {
     // Ignore blocked autoplay in headset browser.
   }
+}
+
+const playOneShotAudio = async (audio) => {
+  if (!audio) return
+  audio.pause()
+  audio.currentTime = 0
+  await playAudioWithRetry(audio)
+  if (audio.paused) return
+  await new Promise((resolve) => {
+    const finish = () => {
+      audio.removeEventListener('ended', finish)
+      audio.removeEventListener('error', finish)
+      resolve()
+    }
+    audio.addEventListener('ended', finish, { once: true })
+    audio.addEventListener('error', finish, { once: true })
+  })
+}
+
+const setCurrentInteractionType = (nextType) => {
+  const normalizedType =
+    nextType && Object.prototype.hasOwnProperty.call(interactionLoopAudioByType, nextType)
+      ? nextType
+      : null
+  if (currentInteractionType === normalizedType) return
+  interactionAudioSequenceToken += 1
+  const sequenceToken = interactionAudioSequenceToken
+  for (const audio of Object.values(interactionLoopAudioByType)) {
+    audio.pause()
+    audio.currentTime = 0
+  }
+  for (const audio of Object.values(interactionOneShotAudio)) {
+    audio.pause()
+    audio.currentTime = 0
+  }
+  currentInteractionType = normalizedType
+  if (!normalizedType) return
+
+  void (async () => {
+    const preSounds = interactionSequenceByType[normalizedType] || []
+    for (const soundName of preSounds) {
+      if (interactionAudioSequenceToken !== sequenceToken) return
+      await playOneShotAudio(interactionOneShotAudio[soundName])
+    }
+    if (interactionAudioSequenceToken !== sequenceToken) return
+    if (currentInteractionType !== normalizedType) return
+    const loopAudio = interactionLoopAudioByType[normalizedType]
+    if (!loopAudio) return
+    loopAudio.currentTime = 0
+    await playAudioWithRetry(loopAudio)
+  })()
+}
+
+const stopInteractionAudioForInactiveState = (activeTypeOrNull) => {
+  if (activeTypeOrNull) {
+    setCurrentInteractionType(activeTypeOrNull)
+    return
+  }
+  stopInteractionAudio()
+}
+
+const mapNeedToInteractionType = (needId) => {
+  if (
+    needId === 'hunger' ||
+    needId === 'poop' ||
+    needId === 'sleep' ||
+    needId === 'shower' ||
+    needId === 'fun'
+  ) {
+    return needId
+  }
+  return null
 }
 
 const setRoundPhase = (nextPhase, snapshot, { needsSummary = undefined } = {}) => {
@@ -657,6 +738,87 @@ const setRoundPhase = (nextPhase, snapshot, { needsSummary = undefined } = {}) =
 const clearRoundOccupancy = () => {
   sharedState.round.zoneOccupancy = Object.fromEntries(ZONE_IDS.map((zoneId) => [zoneId, null]))
   lastBroadcastZoneOccupancy = clone(sharedState.round.zoneOccupancy)
+}
+
+const resolveSpawnSelectionForRound = (roundState) => {
+  const fallback = createDefaultRoundState().spawnSelection
+  const source =
+    roundState && typeof roundState === 'object' && roundState.spawnSelection
+      ? roundState.spawnSelection
+      : fallback
+  const playerSides =
+    source.playerSides && typeof source.playerSides === 'object'
+      ? source.playerSides
+      : {}
+  const normalizedPlayerSides = {}
+  for (const [playerId, side] of Object.entries(playerSides)) {
+    if (side === 'left' || side === 'right') normalizedPlayerSides[playerId] = side
+  }
+  const takenSides = new Set(Object.values(normalizedPlayerSides))
+  return {
+    leftTaken: takenSides.has('left'),
+    rightTaken: takenSides.has('right'),
+    playerSides: normalizedPlayerSides,
+  }
+}
+
+const getClaimedSpawnSideForPlayer = (snapshot, playerId = snapshot.selfId) => {
+  const spawnSelection = resolveSpawnSelectionForRound(sharedState.round)
+  const claimedSide = spawnSelection.playerSides[playerId]
+  return claimedSide === 'left' || claimedSide === 'right' ? claimedSide : null
+}
+
+const getSpawnPositionForPlayer = (snapshot, playerId = snapshot.selfId) => {
+  const side = getClaimedSpawnSideForPlayer(snapshot, playerId)
+  const slotIndex =
+    side && Object.prototype.hasOwnProperty.call(SPAWN_SIDE_TO_SLOT_INDEX, side)
+      ? SPAWN_SIDE_TO_SLOT_INDEX[side]
+      : -1
+  if (slotIndex >= 0 && slotIndex < PLAYER_SPAWN_POINTS.length) {
+    return PLAYER_SPAWN_POINTS[slotIndex]
+  }
+  return null
+}
+
+const resolveSpawnSelectionFromPlayers = (snapshot) => {
+  const players = snapshot.players || {}
+  const current = resolveSpawnSelectionForRound(sharedState.round)
+  const nextSelection = {
+    leftTaken: false,
+    rightTaken: false,
+    playerSides: {},
+  }
+
+  // Lock claims only for players who have already entered the shared scene.
+  // This keeps spawn selection stable after entry while still allowing
+  // pre-entry side changes during calibration.
+  for (const [playerId, side] of Object.entries(current.playerSides)) {
+    const player = players[playerId]
+    if (!player?.readyInSharedScene) continue
+    if (side !== 'left' && side !== 'right') continue
+    if (side === 'left' && nextSelection.leftTaken) continue
+    if (side === 'right' && nextSelection.rightTaken) continue
+    nextSelection.playerSides[playerId] = side
+    if (side === 'left') nextSelection.leftTaken = true
+    if (side === 'right') nextSelection.rightTaken = true
+  }
+
+  for (const [playerId, player] of Object.entries(players)) {
+    if (player?.readyInSharedScene) continue
+    if (nextSelection.playerSides[playerId]) continue
+    const intent = player?.spawnSideIntent
+    if (intent !== 'left' && intent !== 'right') continue
+    if (intent === 'left' && nextSelection.leftTaken) continue
+    if (intent === 'right' && nextSelection.rightTaken) continue
+    nextSelection.playerSides[playerId] = intent
+    if (intent === 'left') nextSelection.leftTaken = true
+    if (intent === 'right') nextSelection.rightTaken = true
+  }
+
+  const takenSides = new Set(Object.values(nextSelection.playerSides))
+  nextSelection.leftTaken = takenSides.has('left')
+  nextSelection.rightTaken = takenSides.has('right')
+  return nextSelection
 }
 
 const resetSharedRoundState = (snapshot) => {
@@ -676,10 +838,10 @@ const resetSharedRoundState = (snapshot) => {
 
 const tryApplyLocalSpawnReferenceSpace = (snapshot) => {
   if (!isInAr || hasAppliedSpawnReferenceSpace || !calibrationResult) return
-  const selfPlayer = snapshot.players?.[snapshot.selfId]
-  if (!Array.isArray(selfPlayer?.spawnPosition) || selfPlayer.spawnPosition.length !== 3) return
+  const spawnPosition = getSpawnPositionForPlayer(snapshot)
+  if (!Array.isArray(spawnPosition) || spawnPosition.length !== 3) return
   renderer.xr.getCamera().getWorldPosition(localHeadPosition)
-  const [spawnX, spawnY, spawnZ] = selfPlayer.spawnPosition
+  const [spawnX, spawnY, spawnZ] = spawnPosition
   const targetHeadY = spawnY + calibrationResult.headToBodyOffset
   const calibratedFloorY =
     typeof calibrationResult.floorY === 'number' ? calibrationResult.floorY : null
@@ -772,23 +934,38 @@ const onRelease = (sourceId, detail = {}) => {
   void toggleCubeState(hitCubeIndex)
 }
 
+const consumeSpawnSelectionRequest = () => {
+  const requestedSide = calibrationSystem.consumeSpawnSelectionRequest()
+  if (!requestedSide) return
+  updateLocalPlayer({ spawnSideIntent: requestedSide })
+}
+
 controllerSystem.events.addEventListener('selectstart', (event) => {
-  const wasCalibrationTrigger = calibrationSystem.onTriggerPress(event.detail.controllerIndex)
+  const wasCalibrationTrigger = calibrationSystem.onTriggerPress(
+    event.detail.controllerIndex,
+    event.detail.intersections
+  )
+  consumeSpawnSelectionRequest()
   if (wasCalibrationTrigger) return
   onPress(`controller-${event.detail.controllerIndex}`, event.detail)
 })
-controllerSystem.events.addEventListener('selectmove', (event) =>
+controllerSystem.events.addEventListener('selectmove', (event) => {
+  calibrationSystem.syncSpawnHoverFromIntersections(event.detail.intersections)
   onMove(`controller-${event.detail.controllerIndex}`, event.detail)
-)
+})
 controllerSystem.events.addEventListener('selectend', (event) =>
   onRelease(`controller-${event.detail.controllerIndex}`, event.detail)
 )
-handTrackingSystem.events.addEventListener('pinchstart', (event) =>
+handTrackingSystem.events.addEventListener('pinchstart', (event) => {
+  const wasCalibrationSelection = calibrationSystem.onSpawnSelectionPress(event.detail.intersections)
+  consumeSpawnSelectionRequest()
+  if (wasCalibrationSelection) return
   onPress(`hand-${event.detail.handIndex}`, event.detail)
-)
-handTrackingSystem.events.addEventListener('pinchmove', (event) =>
+})
+handTrackingSystem.events.addEventListener('pinchmove', (event) => {
+  calibrationSystem.syncSpawnHoverFromIntersections(event.detail.intersections)
   onMove(`hand-${event.detail.handIndex}`, event.detail)
-)
+})
 handTrackingSystem.events.addEventListener('pinchend', (event) =>
   onRelease(`hand-${event.detail.handIndex}`, event.detail)
 )
@@ -824,7 +1001,6 @@ const beginCalibrationFlow = (snapshot) => {
   localIntroFinished = false
   localOutcomeFinished = false
   localRightGripDown = false
-  previousLocalRightGripDown = false
   hasPlayedNightSound = false
   hasPlayedNextMorningSound = false
   previousNeedsCompletionPercent = 0
@@ -843,6 +1019,7 @@ const beginCalibrationFlow = (snapshot) => {
     isInAr: false,
     readyInSharedScene: false,
     isRightGripDown: false,
+    spawnSideIntent: null,
     introFinished: false,
     outcomeFinished: false,
   })
@@ -858,8 +1035,8 @@ const beginCalibrationFlow = (snapshot) => {
 const tryEnterSharedScene = (snapshot) => {
   if (!isInAr || isSharedSceneActive) return
   if (calibrationSystem.getState() !== CalibrationState.calibrated) return
-  const selfPlayer = snapshot.players?.[snapshot.selfId]
-  if (!Array.isArray(selfPlayer?.spawnPosition) || selfPlayer.spawnPosition.length !== 3) return
+  const spawnPosition = getSpawnPositionForPlayer(snapshot)
+  if (!Array.isArray(spawnPosition) || spawnPosition.length !== 3) return
   calibrationResult = calibrationSystem.getResult()
   if (!calibrationResult) return
   localBodyHeightFromHead = calibrationResult.headToBodyOffset
@@ -877,6 +1054,7 @@ const tryEnterSharedScene = (snapshot) => {
     introFinished: false,
     outcomeFinished: false,
     isRightGripDown: false,
+    spawnSideIntent: null,
     position: [localBodyPosition.x, localBodyPosition.y, localBodyPosition.z],
     rotationY: localBodyRotationY,
   })
@@ -985,10 +1163,10 @@ renderer.xr.addEventListener('sessionend', () => {
     isInAr: false,
     readyInSharedScene: false,
     isRightGripDown: false,
+    spawnSideIntent: null,
     introFinished: false,
     outcomeFinished: false,
   })
-  previousLocalRightGripDown = false
 })
 
 const timer = new THREE.Timer()
@@ -1021,6 +1199,31 @@ renderer.setAnimationLoop(() => {
     lastKnownRoundPhase = phase
   }
 
+  if (
+    host &&
+    (phase === ROUND_PHASES.calibrating || phase === ROUND_PHASES.waitingForBothPlayers)
+  ) {
+    const nextSpawnSelection = resolveSpawnSelectionFromPlayers(snapshot)
+    const currentSpawnSelection = resolveSpawnSelectionForRound(sharedState.round)
+    const changed =
+      nextSpawnSelection.leftTaken !== currentSpawnSelection.leftTaken ||
+      nextSpawnSelection.rightTaken !== currentSpawnSelection.rightTaken ||
+      JSON.stringify(nextSpawnSelection.playerSides) !==
+        JSON.stringify(currentSpawnSelection.playerSides)
+    if (changed) {
+      sharedState.round.spawnSelection = nextSpawnSelection
+      sharedState.round.version += 1
+      pushSharedState()
+    }
+  }
+
+  const roundSpawnSelection = resolveSpawnSelectionForRound(sharedState.round)
+  calibrationSystem.setSpawnSelectionState({
+    leftTaken: roundSpawnSelection.leftTaken,
+    rightTaken: roundSpawnSelection.rightTaken,
+    selectedSide: getClaimedSpawnSideForPlayer(snapshot),
+  })
+
   if (phase === ROUND_PHASES.calibrating || phase === ROUND_PHASES.waitingForBothPlayers) {
     tryEnterSharedScene(snapshot)
   }
@@ -1034,7 +1237,6 @@ renderer.setAnimationLoop(() => {
   }
 
   localRightGripDown = isInAr && isSharedSceneActive ? getRightGripPressed() : false
-  const gripJustPressed = localRightGripDown && !previousLocalRightGripDown
 
   if (isInAr && elapsedSeconds - lastPoseUpdateAt > 1 / GAME_CONFIG.round.poseBroadcastHz) {
     updateLocalPlayer({
@@ -1069,6 +1271,15 @@ renderer.setAnimationLoop(() => {
 
   controllerSystem.update()
   handTrackingSystem.update()
+  if (calibrationSystem.getState() === CalibrationState.selectingSpawn) {
+    const calibrationHoverIntersections = [
+      ...controllerSystem.getLatestIntersections(0),
+      ...controllerSystem.getLatestIntersections(1),
+      ...handTrackingSystem.getLatestIntersections(0),
+      ...handTrackingSystem.getLatestIntersections(1),
+    ]
+    calibrationSystem.syncSpawnHoverFromIntersections(calibrationHoverIntersections)
+  }
 
   const players = snapshot.players || {}
   const readyPlayers = Object.values(players).filter(isPlayerReadyForIntro)
@@ -1173,10 +1384,7 @@ renderer.setAnimationLoop(() => {
     )
     sleepEffectTargetOpacity =
       localActiveNeed === 'sleep' && localActiveZoneId === 'zone_2' ? 0.78 : 0
-    if (gripJustPressed) {
-      void replayInteractionAudioOnGripPress(localActiveNeed)
-    }
-    void syncInteractionAudio(localActiveNeed)
+    stopInteractionAudioForInactiveState(mapNeedToInteractionType(localActiveNeed))
 
     if (host) {
       const nextOccupancy = resolved.occupancy
@@ -1252,8 +1460,6 @@ renderer.setAnimationLoop(() => {
   sleepEffectMesh.material.opacity +=
     (sleepEffectTargetOpacity - sleepEffectMesh.material.opacity) * sleepOpacityLerp
   sleepEffectMesh.visible = sleepEffectMesh.material.opacity > 0.02
-  previousLocalRightGripDown = localRightGripDown
-
   renderer.render(scene, camera)
 })
 

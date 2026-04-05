@@ -220,6 +220,11 @@ export const SWITCH_STATE_NAMES = GAME_CONFIG.switches.map((entry) => entry.stat
 export const createDefaultRoundState = () => ({
   phase: ROUND_PHASES.boot,
   zoneOccupancy: Object.fromEntries(ZONE_IDS.map((zoneId) => [zoneId, null])),
+  spawnSelection: {
+    leftTaken: false,
+    rightTaken: false,
+    playerSides: {},
+  },
   needsSummary: null,
   version: 0,
 })

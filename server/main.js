@@ -139,6 +139,7 @@ wss.on('connection', (ws) => {
     isInAr: false,
     readyInSharedScene: false,
     isRightGripDown: false,
+    spawnSideIntent: null,
     introFinished: false,
     outcomeFinished: false,
   }
@@ -207,6 +208,11 @@ wss.on('connection', (ws) => {
       }
       if (typeof incoming.isRightGripDown === 'boolean') {
         client.player.isRightGripDown = incoming.isRightGripDown
+      }
+      if (incoming.spawnSideIntent === null) {
+        client.player.spawnSideIntent = null
+      } else if (incoming.spawnSideIntent === 'left' || incoming.spawnSideIntent === 'right') {
+        client.player.spawnSideIntent = incoming.spawnSideIntent
       }
       if (typeof incoming.introFinished === 'boolean') {
         client.player.introFinished = incoming.introFinished
