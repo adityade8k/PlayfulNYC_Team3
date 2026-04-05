@@ -2,16 +2,38 @@ import * as THREE from 'three'
 import { GAME_CONFIG } from '../../config/game-config.js'
 
 const {
-  color: REMOTE_COLOR,
   bodyRadius: BODY_RADIUS,
   bodyLength: BODY_LENGTH,
   headRadius: HEAD_RADIUS,
 } = GAME_CONFIG.playerVisual.capsule
 const HEAD_OFFSET_Y = BODY_LENGTH / 2 + BODY_RADIUS + HEAD_RADIUS * 0.8
+const BODY_TO_HEAD_ESTIMATE = 0.75 // approximate offset from body center to glasses
+const LOW_HEIGHT_THRESHOLD = 1.2   // glasses height below this → rotate capsule horizontal
+
+// Passthrough mask material: writes alpha=0 to punch a hole through
+// the virtual scene, letting the real-world camera feed show through.
+const passthroughMaterial = new THREE.ShaderMaterial({
+  vertexShader: /* glsl */ `
+    void main() {
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    void main() {
+      gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+    }
+  `,
+  blending: THREE.NoBlending,
+  depthTest: false,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+})
 
 export function createPlayerSystem(scene) {
   const playersGroup = new THREE.Group()
   playersGroup.name = 'players'
+  // Render after the rest of the scene so the mask overwrites virtual content
+  playersGroup.renderOrder = 999
   scene.add(playersGroup)
 
   const playerVisuals = new Map()
@@ -23,8 +45,6 @@ export function createPlayerSystem(scene) {
     const visual = playerVisuals.get(playerId)
     if (!visual) return
     playersGroup.remove(visual.group)
-    visual.body.material.dispose()
-    visual.head.material.dispose()
     remoteTargets.delete(playerId)
     playerVisuals.delete(playerId)
   }
@@ -33,19 +53,16 @@ export function createPlayerSystem(scene) {
     const existing = playerVisuals.get(playerId)
     if (existing) return existing
 
-    const material = new THREE.MeshStandardMaterial({
-      color: REMOTE_COLOR,
-      roughness: 0.5,
-      metalness: 0.05,
-    })
     const group = new THREE.Group()
-    const body = new THREE.Mesh(bodyGeometry, material)
-    const head = new THREE.Mesh(headGeometry, material.clone())
+    const body = new THREE.Mesh(bodyGeometry, passthroughMaterial)
+    const head = new THREE.Mesh(headGeometry, passthroughMaterial)
     head.position.y = HEAD_OFFSET_Y
-    body.castShadow = false
+    body.castShadow = true
     body.receiveShadow = false
-    head.castShadow = false
+    head.castShadow = true
     head.receiveShadow = false
+    body.renderOrder = 999
+    head.renderOrder = 999
     group.add(body)
     group.add(head)
     playersGroup.add(group)
@@ -87,9 +104,10 @@ export function createPlayerSystem(scene) {
           if (typeof player.rotationY === 'number') {
             visual.group.rotation.y = player.rotationY
           }
+          // If glasses are below 1.2m, rotate capsule 90° around Z (lying down)
+          const estimatedHeadY = player.position[1] + BODY_TO_HEAD_ESTIMATE
+          visual.group.rotation.z = estimatedHeadY < LOW_HEIGHT_THRESHOLD ? Math.PI / 2 : 0
         }
-        visual.body.material.color.set(REMOTE_COLOR)
-        visual.head.material.color.set(REMOTE_COLOR)
       }
 
       for (const [playerId] of playerVisuals.entries()) {

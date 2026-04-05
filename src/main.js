@@ -154,6 +154,8 @@ renderer.outputColorSpace = THREE.SRGBColorSpace
 renderer.toneMapping = THREE.ACESFilmicToneMapping
 renderer.toneMappingExposure = 1.0
 renderer.xr.enabled = true
+renderer.shadowMap.enabled = true
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
 renderer.setClearColor(0x000000, 0)
 document.body.appendChild(renderer.domElement)
 
@@ -167,9 +169,28 @@ document.body.appendChild(arButton)
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 0.85))
 scene.add(new THREE.AmbientLight(0xffffff, 0.25))
-const directional = new THREE.DirectionalLight(0xffffff, 0.5)
-directional.position.set(1, 2, 1)
-scene.add(directional)
+const sunLight = new THREE.DirectionalLight(0xfffbe8, 1.5)
+sunLight.position.set(5, 10, 7)
+sunLight.castShadow = true
+sunLight.shadow.mapSize.width = 1024
+sunLight.shadow.mapSize.height = 1024
+sunLight.shadow.camera.near = 0.5
+sunLight.shadow.camera.far = 30
+sunLight.shadow.camera.left = -6
+sunLight.shadow.camera.right = 6
+sunLight.shadow.camera.top = 6
+sunLight.shadow.camera.bottom = -6
+scene.add(sunLight)
+
+// Shadow-only ground: invisible except where shadows fall on it
+const shadowGround = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 20),
+  new THREE.ShadowMaterial({ opacity: 0.35 })
+)
+shadowGround.rotation.x = -Math.PI / 2
+shadowGround.position.y = FLOOR_Y
+shadowGround.receiveShadow = true
+sharedSceneGroup.add(shadowGround)
 
 const sharedState = normalizeSharedState(synchronize('sharedState'))
 const pushSharedState = () => {
@@ -350,6 +371,12 @@ void gltfLoader.loadAsync(environmentModelUrl).then((gltf) => {
   environmentModel.position.fromArray(GAME_CONFIG.environmentModel.position)
   environmentModel.rotation.fromArray(GAME_CONFIG.environmentModel.rotation)
   environmentModel.scale.fromArray(GAME_CONFIG.environmentModel.scale)
+  environmentModel.traverse((node) => {
+    if (node.isMesh) {
+      node.castShadow = true
+      node.receiveShadow = true
+    }
+  })
   sharedSceneGroup.add(environmentModel)
 
   if (!Array.isArray(gltf.animations) || gltf.animations.length === 0) return

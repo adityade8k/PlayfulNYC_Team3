@@ -20,8 +20,8 @@ export function createFloatingCube({
 
   const mesh = new THREE.Mesh(geometry, material)
   mesh.position.set(...position)
-  mesh.castShadow = false
-  mesh.receiveShadow = false
+  mesh.castShadow = true
+  mesh.receiveShadow = true
   mesh.userData.interactive = true
 
   return {
