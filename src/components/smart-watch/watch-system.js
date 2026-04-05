@@ -271,7 +271,8 @@ export const createSmartWatchXRSystem = ({
     startOutcomeCall(summaries = []) {
       return landlordCall.startOutcomeCall({ summaries })
     },
-    showStats() {
+    showStats(summary = null) {
+      store.setSessionSummary(summary)
       store.setScreen('stats')
       store.setCallState({ speaking: false, finished: true, error: null })
     },

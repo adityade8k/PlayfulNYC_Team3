@@ -24,6 +24,55 @@ const resolveNeedColor = (value, colorName) => {
   return '#41c95b'
 }
 
+const sanitizeSessionSummary = (summary) => {
+  if (!summary || typeof summary !== 'object') return null
+
+  const normalizedPlayers = Array.isArray(summary.summaries)
+    ? summary.summaries
+        .map((player, index) => {
+          const overallScore = Number(player?.overallScore)
+          if (!Number.isFinite(overallScore)) return null
+          return {
+            playerId:
+              typeof player?.playerId === 'string' && player.playerId.trim()
+                ? player.playerId.trim()
+                : `player_${index + 1}`,
+            overallScore: clampValue(overallScore),
+          }
+        })
+        .filter(Boolean)
+    : []
+
+  const teamScoreRaw = Number(summary.teamScore)
+  const teamScore = Number.isFinite(teamScoreRaw)
+    ? clampValue(teamScoreRaw)
+    : normalizedPlayers.length > 0
+      ? clampValue(
+          normalizedPlayers.reduce((sum, player) => sum + player.overallScore, 0) /
+            normalizedPlayers.length
+        )
+      : null
+
+  const teamStarsRaw = Number(summary.teamStars)
+  const teamStars = Number.isFinite(teamStarsRaw)
+    ? Math.max(0, Math.min(3, Math.round(teamStarsRaw)))
+    : teamScore === null
+      ? null
+      : teamScore >= 80
+        ? 3
+        : teamScore >= 50
+          ? 2
+          : teamScore >= 25
+            ? 1
+            : 0
+
+  return {
+    teamScore,
+    teamStars,
+    summaries: normalizedPlayers,
+  }
+}
+
 const buildInitialState = (playerNeedsSession = null, playerId = null) => {
   const playerNeeds = playerNeedsSession?.getPlayer?.(playerId)
   const playerState = playerNeeds?.getState?.()
@@ -39,6 +88,7 @@ const buildInitialState = (playerNeedsSession = null, playerId = null) => {
       finished: false,
       error: null,
     },
+    sessionSummary: null,
     needs: Object.fromEntries(
       Object.entries(NEEDS_UI_CONFIG).map(([key, config]) => {
         const value = clampValue(liveNeeds[key] ?? 100)
@@ -133,6 +183,11 @@ export const createSmartWatchStore = (
 
     setCallState(partial) {
       state.call = { ...state.call, ...partial }
+      notify()
+    },
+
+    setSessionSummary(summary) {
+      state.sessionSummary = sanitizeSessionSummary(summary)
       notify()
     },
 

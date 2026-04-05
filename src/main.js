@@ -130,7 +130,7 @@ playerNeedsSession.onSessionEnd = (summaries) => {
   broadcastGlobal('needsSummary', endData)
 
   if (!smartWatch) return
-  smartWatch.showStats()
+  smartWatch.showStats(endData)
   void smartWatch.startOutcomeCall(summaries)
 }
 
