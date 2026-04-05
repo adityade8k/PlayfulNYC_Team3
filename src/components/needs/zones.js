@@ -1,182 +1,214 @@
-// ============================================================
-//  zones.js  —  src/components/needs/zones.js
-//  Invisible trigger zones that activate player needs.
-//  Each zone is a box in world space. When the player's head
-//  position is inside a box, that need starts filling.
-// ============================================================
 import * as THREE from 'three'
+import { GAME_CONFIG } from '../../config/game-config.js'
 
-// ── Zone layout ───────────────────────────────────────────────
-// Positions are in world space. Adjust these once you have the
-// real apartment geometry. For now, one zone per corner.
-//
-// The floor plane in this project is at FLOOR_Y = -1.
-// The 8x8 floor goes from -4 to +4 on X and Z.
-// Corners are at roughly ±3 on X and Z.
+const tempWorldPoint = new THREE.Vector3()
+const tempLocalPoint = new THREE.Vector3()
+const tempInverse = new THREE.Matrix4()
+const ZONE_DEBUG_COLORS = Object.freeze({
+  idle: '#6e7a88',
+  inside: '#2f9bff',
+  localUsing: '#00d56f',
+  blocked: '#ff6d3a',
+})
 
-const ZONE_DEFINITIONS = [
-  {
-    key:      'hunger',      // must match a need key in PlayerNeedsSystem
-    label:    'Kitchen',
-    position: new THREE.Vector3(-3,  0, -3),   // back-left corner
-    size:     new THREE.Vector3( 1.5, 2.5, 1.5),
-    color:    0xffaa00,      // orange — visible debug mesh
-  },
-  {
-    key:      'poop',
-    label:    'Toilet',
-    position: new THREE.Vector3( 3,  0, -3),   // back-right corner
-    size:     new THREE.Vector3( 1.5, 2.5, 1.5),
-    color:    0x8B4513,      // brown
-  },
-  {
-    key:      'shower',
-    label:    'Shower',
-    position: new THREE.Vector3( 3,  0,  3),   // front-right corner
-    size:     new THREE.Vector3( 1.5, 2.5, 1.5),
-    color:    0x00aaff,      // blue
-  },
-  {
-    key:      'sleep',
-    label:    'Bed',
-    position: new THREE.Vector3(-3,  0,  3),   // front-left corner
-    size:     new THREE.Vector3( 1.5, 2.5, 1.5),
-    color:    0x9b59b6,      // purple
-  },
-]
-
-// ── ZoneSystem ────────────────────────────────────────────────
+const getNeedsPlayerIdForSlot = (slotIndex) => {
+  if (slotIndex === 0) return 'player_1'
+  if (slotIndex === 1) return 'player_2'
+  return null
+}
 
 export class ZoneSystem {
-  /**
-   * @param {THREE.Scene} scene
-   * @param {object} options
-   * @param {boolean} options.debug  - show colored wireframe boxes (default true)
-   */
-  constructor(scene, { debug = true } = {}) {
+  constructor(scene, { debug = GAME_CONFIG.debug.zonesVisible, zones = GAME_CONFIG.zones } = {}) {
     this.scene = scene
+    this.debugRoot = new THREE.Group()
+    this.debugRoot.name = 'zone-debug-root'
+    this.scene.add(this.debugRoot)
     this.zones = []
     this.debug = debug
-
-    // Track which zone each player is currently in
-    // key = playerId, value = zone key or null
-    this._playerActiveZone = {}
-
-    this._buildZones()
+    this.localPlayerZone = null
+    this.playerZones = {
+      player_1: null,
+      player_2: null,
+    }
+    this._buildZones(zones)
   }
 
-  // ── Setup ─────────────────────────────────────────────────
+  _buildZones(zones) {
+    for (let index = 0; index < zones.length; index += 1) {
+      const definition = zones[index]
+      const node = new THREE.Object3D()
+      node.name = `zone-${definition.id}`
+      node.position.fromArray(definition.position)
+      node.rotation.fromArray(definition.rotation || [0, 0, 0])
+      node.scale.fromArray(definition.scale)
+      node.updateMatrixWorld(true)
 
-  _buildZones() {
-    for (const def of ZONE_DEFINITIONS) {
-      const box = new THREE.Box3()
-      const half = def.size.clone().multiplyScalar(0.5)
-      box.min.copy(def.position).sub(half)
-      box.max.copy(def.position).add(half)
-
-      this.zones.push({ ...def, box })
-
+      const zone = {
+        id: definition.id,
+        label: definition.label || definition.id,
+        node,
+        debugColor: definition.debugColor || '#ffffff',
+        debugMesh: null,
+      }
+      this.zones.push(zone)
       if (this.debug) {
-        // Wireframe box so you can see the zones during development
-        const helper = new THREE.Box3Helper(box, def.color)
-        this.scene.add(helper)
-
-        // Floating label (uses a sprite so it faces the camera)
-        const canvas = document.createElement('canvas')
-        canvas.width = 256
-        canvas.height = 64
-        const ctx = canvas.getContext('2d')
-        ctx.fillStyle = `#${def.color.toString(16).padStart(6, '0')}`
-        ctx.font = 'bold 32px sans-serif'
-        ctx.textAlign = 'center'
-        ctx.fillText(def.label, 128, 44)
-        const texture = new THREE.CanvasTexture(canvas)
-        const sprite = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: texture, transparent: true })
-        )
-        sprite.position.copy(def.position)
-        sprite.position.y += def.size.y * 0.5 + 0.2
-        sprite.scale.set(1.2, 0.3, 1)
-        this.scene.add(sprite)
+        this._createDebugMesh(zone)
       }
     }
   }
 
-  // ── Per-frame update ──────────────────────────────────────
-  /**
-   * Call this every frame from your animation loop.
-   *
-   * @param {object} players          - snapshot.players from multiplayer
-   * @param {string} selfId           - snapshot.selfId
-   * @param {THREE.Vector3|null} localBodyPosition - local player world position
-   * @param {object} playerNeedsSession - your PlayerNeedsSession instance
-   */
-  update(players, selfId, localBodyPosition, playerNeedsSession) {
-    if (!players) return
+  _createDebugMesh(zone) {
+    const wire = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+      new THREE.LineBasicMaterial({
+        color: zone.debugColor,
+        transparent: true,
+        opacity: 0.85,
+      })
+    )
+    wire.position.copy(zone.node.position)
+    wire.rotation.copy(zone.node.rotation)
+    wire.scale.copy(zone.node.scale)
+    this.debugRoot.add(wire)
+    zone.debugMesh = wire
+  }
 
-    for (const [playerId, playerData] of Object.entries(players)) {
-      // Use local body position for self (more accurate),
-      // networked position for the remote player
-      let position
-      if (playerId === selfId && localBodyPosition) {
+  resolveZoneAtWorldPosition(worldPosition) {
+    if (!worldPosition) return null
+    tempWorldPoint.copy(worldPosition)
+    for (let index = 0; index < this.zones.length; index += 1) {
+      const zone = this.zones[index]
+      zone.node.updateMatrixWorld(true)
+      tempInverse.copy(zone.node.matrixWorld).invert()
+      tempLocalPoint.copy(tempWorldPoint).applyMatrix4(tempInverse)
+      if (
+        Math.abs(tempLocalPoint.x) <= 0.5 &&
+        Math.abs(tempLocalPoint.y) <= 0.5 &&
+        Math.abs(tempLocalPoint.z) <= 0.5
+      ) {
+        return zone.id
+      }
+    }
+    return null
+  }
+
+  update(players, selfId, localBodyPosition) {
+    this.localPlayerZone = null
+    this.playerZones.player_1 = null
+    this.playerZones.player_2 = null
+    if (!players || typeof players !== 'object') return this.getSnapshot()
+
+    for (const [networkPlayerId, playerData] of Object.entries(players)) {
+      const needsPlayerId = getNeedsPlayerIdForSlot(playerData?.slotIndex)
+      if (!needsPlayerId) continue
+      let position = null
+      if (networkPlayerId === selfId && localBodyPosition) {
         position = localBodyPosition
-      } else if (Array.isArray(playerData.position)) {
-        position = new THREE.Vector3(...playerData.position)
-      } else {
-        continue
+      } else if (Array.isArray(playerData?.position) && playerData.position.length === 3) {
+        position = tempWorldPoint.fromArray(playerData.position)
       }
-
-      // Map server slot to our player keys
-      // slot 0 = player_1 (left spawn), slot 1 = player_2 (right spawn)
-      const needsPlayerId = playerData.slotIndex === 0 ? 'player_1' : 'player_2'
-      const playerNeeds = playerNeedsSession.getPlayer(needsPlayerId)
-      if (!playerNeeds) continue
-
-      // Check which zone this player is in
-      let currentZoneKey = null
-      for (const zone of this.zones) {
-        if (zone.box.containsPoint(position)) {
-          currentZoneKey = zone.key
-          break
-        }
+      if (!position) continue
+      const zoneId = this.resolveZoneAtWorldPosition(position)
+      this.playerZones[needsPlayerId] = zoneId
+      if (networkPlayerId === selfId) {
+        this.localPlayerZone = zoneId
       }
+    }
+    return this.getSnapshot()
+  }
 
-      // Only call enterZone/exitZone when the zone actually changes
-      const previousZoneKey = this._playerActiveZone[playerId] ?? null
-      if (currentZoneKey !== previousZoneKey) {
-        if (currentZoneKey) {
-          playerNeeds.enterZone(currentZoneKey)
-          console.log(`[zones] ${needsPlayerId} entered ${currentZoneKey}`)
-        } else {
-          playerNeeds.exitZone()
-          console.log(`[zones] ${needsPlayerId} exited ${previousZoneKey}`)
-        }
-        this._playerActiveZone[playerId] = currentZoneKey
-      }
+  getSnapshot() {
+    return {
+      localPlayerZone: this.localPlayerZone,
+      playerZones: { ...this.playerZones },
     }
   }
 
-  // ── Helpers ───────────────────────────────────────────────
-
-  /** Hide all debug wireframes (call once apartment geometry is final) */
-  hideDebug() {
-    this.debug = false
+  getLocalPlayerZone() {
+    return this.localPlayerZone
   }
 
-  /**
-   * Reposition a zone by key — use this once you have real apartment coords.
-   * @param {string} key        - 'hunger' | 'poop' | 'shower' | 'sleep'
-   * @param {THREE.Vector3} newPosition
-   * @param {THREE.Vector3} [newSize]
-   */
-  repositionZone(key, newPosition, newSize) {
-    const zone = this.zones.find(z => z.key === key)
-    if (!zone) return
-    const size = newSize || zone.size
-    const half = size.clone().multiplyScalar(0.5)
-    zone.position.copy(newPosition)
-    zone.size.copy(size)
-    zone.box.min.copy(newPosition).sub(half)
-    zone.box.max.copy(newPosition).add(half)
+  updateDebugVisuals({ localNeedsPlayerId = null, occupancy = {}, candidates = {} } = {}) {
+    if (!this.debug) return
+    const localCandidateZone = candidates?.[localNeedsPlayerId]?.zoneId || null
+
+    for (let index = 0; index < this.zones.length; index += 1) {
+      const zone = this.zones[index]
+      const debugMesh = zone.debugMesh
+      if (!debugMesh?.material) continue
+
+      const occupant = occupancy?.[zone.id] || null
+      const isInside = this.localPlayerZone === zone.id
+      const isLocalUsing = occupant === localNeedsPlayerId && localCandidateZone === zone.id
+      const isBlocked = Boolean(occupant && occupant !== localNeedsPlayerId)
+
+      let color = ZONE_DEBUG_COLORS.idle
+      let opacity = 0.55
+      if (isInside) {
+        color = ZONE_DEBUG_COLORS.inside
+        opacity = 0.9
+      }
+      if (isBlocked) {
+        color = ZONE_DEBUG_COLORS.blocked
+        opacity = 1
+      }
+      if (isLocalUsing) {
+        color = ZONE_DEBUG_COLORS.localUsing
+        opacity = 1
+      }
+
+      debugMesh.material.color.set(color)
+      debugMesh.material.opacity = opacity
+    }
+  }
+
+  resetDebugVisuals() {
+    if (!this.debug) return
+    for (let index = 0; index < this.zones.length; index += 1) {
+      const material = this.zones[index].debugMesh?.material
+      if (!material) continue
+      material.color.set(ZONE_DEBUG_COLORS.idle)
+      material.opacity = 0.55
+    }
+  }
+
+  setDebugVisible(visible) {
+    this.debugRoot.visible = Boolean(visible)
+  }
+
+  setZoneTransform(zoneId, { position, rotation, scale } = {}) {
+    const zone = this.zones.find((entry) => entry.id === zoneId)
+    if (!zone) return false
+
+    if (Array.isArray(position) && position.length === 3) {
+      zone.node.position.fromArray(position)
+    }
+    if (Array.isArray(rotation) && rotation.length === 3) {
+      zone.node.rotation.fromArray(rotation)
+    }
+    if (Array.isArray(scale) && scale.length === 3) {
+      zone.node.scale.fromArray(scale)
+    }
+    zone.node.updateMatrixWorld(true)
+
+    if (zone.debugMesh) {
+      zone.debugMesh.position.copy(zone.node.position)
+      zone.debugMesh.rotation.copy(zone.node.rotation)
+      zone.debugMesh.scale.copy(zone.node.scale)
+    }
+    return true
+  }
+
+  getZoneTransforms() {
+    return this.zones.map((zone) => ({
+      id: zone.id,
+      position: zone.node.position.toArray(),
+      rotation: [zone.node.rotation.x, zone.node.rotation.y, zone.node.rotation.z],
+      scale: zone.node.scale.toArray(),
+    }))
+  }
+
+  dispose() {
+    this.scene.remove(this.debugRoot)
   }
 }

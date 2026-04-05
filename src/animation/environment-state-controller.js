@@ -16,14 +16,7 @@ export const ENVIRONMENT_ANIMATION_STATE_CONFIG = {
         OFF: 'bed 1 close',
       },
       initialValue: false,
-      dependencies: [
-        {
-          type: 'exclusiveOnWith',
-          whenValue: true,
-          states: ['bed2'],
-          reason: 'only one bed can be ON at a time',
-        },
-      ],
+      dependencies: [],
     },
     bed2: {
       label: 'Bed 2',
@@ -33,14 +26,7 @@ export const ENVIRONMENT_ANIMATION_STATE_CONFIG = {
         OFF: 'bed 2 close',
       },
       initialValue: false,
-      dependencies: [
-        {
-          type: 'exclusiveOnWith',
-          whenValue: true,
-          states: ['bed1'],
-          reason: 'only one bed can be ON at a time',
-        },
-      ],
+      dependencies: [],
     },
     shower: {
       label: 'Shower',
@@ -50,14 +36,7 @@ export const ENVIRONMENT_ANIMATION_STATE_CONFIG = {
         OFF: 'shower close',
       },
       initialValue: false,
-      dependencies: [
-        {
-          type: 'requiresStatesOff',
-          whenValue: true,
-          states: ['bed1', 'bed2'],
-          reason: 'shower can open only if both beds are closed',
-        },
-      ],
+      dependencies: [],
     },
     kitchen: {
       label: 'Kitchen',
@@ -139,6 +118,14 @@ export const createEnvironmentAnimationStateController = ({
     if (!stateConfig) return `unknown state "${stateName}"`
     const dependencies = stateConfig.dependencies || []
     const isKitchenToiletState = stateName === 'kitchen' || stateName === 'toilet'
+    const isBedState = stateName === 'bed1' || stateName === 'bed2'
+
+    if (isBedState && nextValue === true) {
+      const otherBedStateName = stateName === 'bed1' ? 'bed2' : 'bed1'
+      if (Boolean(currentState[otherBedStateName])) {
+        return `blocked by rule: ${otherBedStateName} is already ON`
+      }
+    }
 
     if (isKitchenToiletState) {
       const kitchenIsOn = Boolean(currentState.kitchen)

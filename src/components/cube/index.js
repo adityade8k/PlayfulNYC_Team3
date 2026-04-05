@@ -35,6 +35,12 @@ export function createFloatingCube({
       if (Array.isArray(sharedState.position) && sharedState.position.length === 3) {
         mesh.position.fromArray(sharedState.position)
       }
+      if (Array.isArray(sharedState.rotation) && sharedState.rotation.length === 3) {
+        mesh.rotation.fromArray(sharedState.rotation)
+      }
+      if (Array.isArray(sharedState.scale) && sharedState.scale.length === 3) {
+        mesh.scale.fromArray(sharedState.scale)
+      }
       const color =
         COLOR_MAP[sharedState.color] ??
         sharedState.color ??

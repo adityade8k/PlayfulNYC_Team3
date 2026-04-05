@@ -46,7 +46,8 @@ export const createLandlordCallController = (
     endpoint = '/api/landlord-call',
     autoAdvanceOnError = false,
     onStatus = () => {},
-    onFinished = () => {},
+    onIntroFinished = () => {},
+    onOutcomeFinished = () => {},
   } = {}
 ) => {
   const audio = new Audio()
@@ -94,11 +95,12 @@ export const createLandlordCallController = (
     store.setScreen('stats')
     if (activeCallKind === 'outcome') {
       onStatus('Landlord outcome call finished.')
+      onOutcomeFinished()
       return
     }
     onStatus('Landlord call finished.')
     onStatus('Landlord intro finished. Stats screen is live.')
-    onFinished()
+    onIntroFinished()
   }
 
   const setError = (message) => {
@@ -334,6 +336,14 @@ export const createLandlordCallController = (
     startOutcomeCall,
     replayCall: startCall,
     skipToStats: advanceToStats,
+    stopPlayback() {
+      clearTimer()
+      audio.pause()
+      audio.currentTime = 0
+      revokeObjectUrl()
+      activeCallKind = 'intro'
+      startPromise = null
+    },
     dispose() {
       clearTimer()
       audio.pause()

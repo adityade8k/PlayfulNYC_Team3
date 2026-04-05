@@ -4,12 +4,10 @@
 //  Drop this into any game loop; connect XR/multiplayer later.
 // ============================================================
 
-// ── Configuration ────────────────────────────────────────────
-// All rates are in "units per second" on a 0–100 scale.
-// Tweak DECAY_RATES and FILL_RATES to change game feel.
+import { GAME_CONFIG } from '../../config/game-config.js'
 
 export const NEEDS_CONFIG = {
-  gameDuration: 30,        // seconds (default 60s; change freely)
+  gameDuration: GAME_CONFIG.round.durationSeconds,
   // Optional watch start hour (24h format). The watch advances
   // through a full 24-hour cycle over gameDuration.
   watchStartHour24: 8,
@@ -23,16 +21,18 @@ export const NEEDS_CONFIG = {
   decayRates: {
     hunger: 1.8,            // fastest — you get hungry quick
     poop:   1.2,            // medium
-    shower: 0.6,            // slow — you can hold it
-    sleep:  0.4,            // very slow — long cycle
+    shower: 1.6,            // slow — you can hold it
+    sleep:  1.4, 
+    fun: 0.16           // very slow — long cycle
   },
 
   // How fast each bar fills while player is in the zone
   fillRates: {
-    hunger: 25,             // eating is fast
-    poop:   20,             // bathroom takes a moment
-    shower: 15,             // shower takes longer
-    sleep:  8,              // sleep is slowest to fill
+    hunger: 60,             // eating is fast
+    poop:   60,             // bathroom takes a moment
+    shower: 60,             // shower takes longer
+    sleep:  60,
+    fun: 60               // steady fun recovery
   },
 
   // Thresholds for bar color and scoring (0–100)
@@ -117,6 +117,11 @@ const SHAME_MESSAGES = {
     'collapsed from exhaustion',
     'fell asleep standing up',
   ],
+  fun: [
+    'forgot to recharge',
+    'burned out from routine',
+    'had zero fun all week',
+  ],
 }
 
 function randomMessage(needKey) {
@@ -125,7 +130,7 @@ function randomMessage(needKey) {
 }
 
 // ── PlayerNeeds ───────────────────────────────────────────────
-// Tracks one player's four need bars.
+// Tracks one player's need bars.
 // One instance per player — managed by PlayerNeedsSession.
 
 export class PlayerNeeds {
@@ -144,11 +149,11 @@ export class PlayerNeeds {
     }
 
     // Current bar values (0–100)
-    this.needs = { hunger: 100, poop: 100, shower: 100, sleep: 100 }
+    this.needs = { hunger: 100, poop: 100, shower: 100, sleep: 100, fun: 100 }
 
     // Which zone the player is currently standing in (null = none)
     // Set this from your XR collider / zone detection
-    this.activeZone = null  // 'hunger' | 'poop' | 'shower' | 'sleep' | null
+    this.activeZone = null
 
     // Shame log — array of { need, message, timestamp }
     this.shameEvents = []
@@ -207,12 +212,20 @@ export class PlayerNeeds {
 
   /** Player entered a need zone (e.g. stepped into kitchen area) */
   enterZone(zoneKey) {
-    this.activeZone = zoneKey
+    this.activeZone = this.needs[zoneKey] ? zoneKey : null
   }
 
   /** Player left a need zone */
   exitZone() {
     this.activeZone = null
+  }
+
+  setActiveNeed(needKeyOrNull) {
+    if (!needKeyOrNull || !this.needs[needKeyOrNull]) {
+      this.activeZone = null
+      return
+    }
+    this.activeZone = needKeyOrNull
   }
 
   // ── Bar color ─────────────────────────────────────────────────
@@ -226,7 +239,7 @@ export class PlayerNeeds {
     return 'red'
   }
 
-  /** Returns colors for all four needs at once. */
+  /** Returns colors for all needs at once. */
   getAllColors() {
     return Object.fromEntries(
       Object.keys(this.needs).map(k => [k, this.getBarColor(k)])
@@ -309,6 +322,16 @@ export class PlayerNeeds {
     this.shameEvents.push(event)
     this.onShameEvent?.(this.playerId, event)
   }
+
+  reset() {
+    for (const needKey of Object.keys(this.needs)) {
+      this.needs[needKey] = 100
+    }
+    this.activeZone = null
+    this.shameEvents = []
+    this._history = []
+    this._historyTimer = 0
+  }
 }
 
 // ── PlayerNeedsSession ────────────────────────────────────────
@@ -345,8 +368,8 @@ export class PlayerNeedsSession {
   }
 
   start() {
+    this.reset({ preservePlayers: true })
     this.running = true
-    this.elapsed = 0
   }
 
   /** Call this inside your Three.js renderer.setAnimationLoop */
@@ -371,12 +394,29 @@ export class PlayerNeedsSession {
     return summaries
   }
 
+  stop() {
+    this.running = false
+  }
+
   /** Full state snapshot — JSON.stringify this and send over WebSocket. */
   getState() {
     return {
       elapsed:  this.elapsed,
       duration: this.cfg.gameDuration,
+      running: this.running,
       players:  Object.values(this.players).map(p => p.getState()),
+    }
+  }
+
+  reset({ preservePlayers = true } = {}) {
+    this.running = false
+    this.elapsed = 0
+    if (!preservePlayers) {
+      this.players = {}
+      return
+    }
+    for (const player of Object.values(this.players)) {
+      player.reset()
     }
   }
 }
