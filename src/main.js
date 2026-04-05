@@ -19,7 +19,11 @@ import {
   PLAYER_SPAWN_POINTS,
   createDefaultSharedState,
 } from '../shared/default-state.js'
-import { PlayerNeedsSession } from './components/needs/index.js'
+import {
+  NEEDS_CONFIG,
+  PlayerNeedsSession,
+  getSessionCompletionPercent,
+} from './components/needs/index.js'
 import { ZoneSystem } from './components/needs/zones.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
 
@@ -116,6 +120,13 @@ playerNeedsSession.onSessionEnd = (summaries) => {
   if (smartWatch) void smartWatch.startOutcomeCall(summaries)
 }
 
+playerNeedsSession.onSessionEnd = (summaries) => {
+  console.log('[needs] session ended, starting landlord verdict call', summaries)
+  broadcastGlobal('needsSummary', summaries)
+  if (!smartWatch) return
+  void smartWatch.startOutcomeCall(summaries)
+}
+
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
   const [x, , z] = PLAYER_SPAWN_POINTS[index]
@@ -180,6 +191,9 @@ const ensurePostCalibrationSystemsInitialized = () => {
         if (hasStartedNeedsSession) return
         playerNeedsSession.start()
         hasStartedNeedsSession = true
+        hasPlayedNightSound = false
+        hasPlayedNextMorningSound = false
+        previousNeedsCompletionPercent = 0
         console.log('[needs] session started after landlord intro finished')
       },
     })
@@ -276,6 +290,30 @@ let calibrationResult = null
 let isSharedSceneActive = false
 let lastIntroWaitReason = ''
 let introFallbackDeadlineAt = null
+let hasPlayedNightSound = false
+let hasPlayedNextMorningSound = false
+let previousNeedsCompletionPercent = 0
+const NIGHT_COMPLETION_PERCENT =
+  Number(NEEDS_CONFIG.sessionMilestones?.nightCompletionPercent) || 50
+const NEXT_MORNING_COMPLETION_PERCENT =
+  Number(NEEDS_CONFIG.sessionMilestones?.nextMorningCompletionPercent) || 90
+const nightAudio = new Audio('/sounds/cricket.mp3')
+nightAudio.preload = 'auto'
+const nextMorningAudio = new Audio('/sounds/bird.mp3')
+nextMorningAudio.preload = 'auto'
+
+const playMilestoneSound = async (audio, label) => {
+  try {
+    audio.currentTime = 0
+    await audio.play()
+    console.log(`[needs][milestone] played ${label} sound`)
+  } catch (error) {
+    console.warn(
+      `[needs][milestone] failed to play ${label} sound:`,
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+}
 
 const pushSharedState = () => {
   setGlobal('sharedState', sharedState)
@@ -463,6 +501,9 @@ renderer.xr.addEventListener('sessionstart', () => {
   hasTriggeredLandlordIntro = false
   lastIntroWaitReason = ''
   introFallbackDeadlineAt = null
+  hasPlayedNightSound = false
+  hasPlayedNextMorningSound = false
+  previousNeedsCompletionPercent = 0
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -484,9 +525,13 @@ renderer.xr.addEventListener('sessionend', () => {
   sharedSceneGroup.visible = false
   calibrationResult = null
   hasAppliedSpawnReferenceSpace = false
+  hasStartedNeedsSession = false
   hasTriggeredLandlordIntro = false
   lastIntroWaitReason = ''
   introFallbackDeadlineAt = null
+  hasPlayedNightSound = false
+  hasPlayedNextMorningSound = false
+  previousNeedsCompletionPercent = 0
   calibrationSystem.endSession()
   updateLocalPlayer({ isInAr: false })
 })
@@ -550,6 +595,31 @@ renderer.setAnimationLoop(() => {
   }
   if (isInAr && isSharedSceneActive && hasStartedNeedsSession) {
     playerNeedsSession.update(deltaSeconds)
+    const sessionState = playerNeedsSession.getState()
+    const completionPercent = getSessionCompletionPercent(
+      sessionState.elapsed,
+      sessionState.duration
+    )
+
+    if (
+      !hasPlayedNightSound &&
+      previousNeedsCompletionPercent < NIGHT_COMPLETION_PERCENT &&
+      completionPercent >= NIGHT_COMPLETION_PERCENT
+    ) {
+      hasPlayedNightSound = true
+      void playMilestoneSound(nightAudio, 'night')
+    }
+
+    if (
+      !hasPlayedNextMorningSound &&
+      previousNeedsCompletionPercent < NEXT_MORNING_COMPLETION_PERCENT &&
+      completionPercent >= NEXT_MORNING_COMPLETION_PERCENT
+    ) {
+      hasPlayedNextMorningSound = true
+      void playMilestoneSound(nextMorningAudio, 'next-morning')
+    }
+
+    previousNeedsCompletionPercent = completionPercent
   }
   if (isInAr && isSharedSceneActive && zoneSystem) {
     zoneSystem.update(snapshot.players, snapshot.selfId, localBodyPosition, playerNeedsSession)

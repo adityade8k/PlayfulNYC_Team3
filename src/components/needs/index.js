@@ -15,6 +15,11 @@ export const NEEDS_CONFIG = {
   watchSecondRealSeconds: 0.1,
   // Optional watch start hour (24h format).
   watchStartHour24: 8,
+  // Session milestones (% complete) used by ambience cues and day progression.
+  sessionMilestones: {
+    nightCompletionPercent: 50,
+    nextMorningCompletionPercent: 90,
+  },
 
   // How fast each bar drains per second (0–100 scale)
   decayRates: {
@@ -75,6 +80,15 @@ export const getWatchClockFromElapsed = (
     timeLabel: formatHourMinute(hour24, minute),
     dayLabel: `DAY ${dayNumber}`,
   }
+}
+
+export const getSessionCompletionPercent = (
+  elapsedRealSeconds = 0,
+  durationSeconds = NEEDS_CONFIG.gameDuration
+) => {
+  const duration = toPositiveNumber(durationSeconds, NEEDS_CONFIG.gameDuration)
+  const elapsed = Math.max(0, Number(elapsedRealSeconds) || 0)
+  return Math.max(0, Math.min(100, (elapsed / duration) * 100))
 }
 
 // ── Shame event messages ──────────────────────────────────────
