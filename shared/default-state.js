@@ -1,7 +1,10 @@
 export const DEFAULT_SHARED_STATE = {
   cubes: [
-    { color: 'red', position: [-0.45, 0.1, -1.1] },
-    { color: 'blue', position: [0.45, 0.1, -1.1] },
+    { color: 'red', position: [-0.72, 0.9, -0.5] },
+    { color: 'red', position: [-0.36, 0.9, -0.5] },
+    { color: 'red', position: [0.0, 0.9, -0.5] },
+    { color: 'red', position: [0.36, 0.9, -0.5] },
+    { color: 'red', position: [0.72, 0.9, -0.5] },
   ],
 }
 
