@@ -179,6 +179,12 @@ export const GAME_CONFIG = {
       rotation: [0.25, 0.12, -0.28],
     },
   },
+  watchUi: {
+    // Multiplies the whole watch model scale in XR + preview.
+    worldScaleMultiplier: 1.25,
+    // Zooms all canvas-drawn watch UI elements uniformly.
+    canvasScale: 1.12,
+  },
   round: {
     durationSeconds: 180,
     poseBroadcastHz: 20,
