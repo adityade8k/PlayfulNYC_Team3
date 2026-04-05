@@ -132,7 +132,11 @@ export const createSmartWatchXRSystem = ({
   const tempPosition = new THREE.Vector3()
   const tempQuaternion = new THREE.Quaternion()
   let elapsedMs = 0
-  let watchClock = getWatchClockFromElapsed(0, NEEDS_CONFIG)
+  let watchClock = getWatchClockFromElapsed(
+    0,
+    NEEDS_CONFIG.gameDuration,
+    NEEDS_CONFIG
+  )
   let lastState = store.getState()
   let lastTracking = 'desktop-preview'
 
@@ -281,7 +285,13 @@ export const createSmartWatchXRSystem = ({
       elapsedMs = time
       const sessionState = playerNeedsSession?.getState?.()
       const elapsedSessionSeconds = Number(sessionState?.elapsed) || 0
-      watchClock = getWatchClockFromElapsed(elapsedSessionSeconds, NEEDS_CONFIG)
+      const sessionDurationSeconds =
+        Number(sessionState?.duration) || NEEDS_CONFIG.gameDuration
+      watchClock = getWatchClockFromElapsed(
+        elapsedSessionSeconds,
+        sessionDurationSeconds,
+        NEEDS_CONFIG
+      )
       renderWatchScreen()
       screenMesh.material.emissiveIntensity =
         lastState.screen === 'incoming-call' ? 0.62 : 0.48

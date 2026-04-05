@@ -9,11 +9,9 @@
 // Tweak DECAY_RATES and FILL_RATES to change game feel.
 
 export const NEEDS_CONFIG = {
-  gameDuration: 240,        // seconds (10 min default — change freely)
-  // Real seconds needed for 1 watch-second to pass.
-  // 0.1 means watch time runs ~10x faster than real time.
-  watchSecondRealSeconds: 0.1,
-  // Optional watch start hour (24h format).
+  gameDuration: 240,        // seconds (default 60s; change freely)
+  // Optional watch start hour (24h format). The watch advances
+  // through a full 24-hour cycle over gameDuration.
   watchStartHour24: 8,
   // Session milestones (% complete) used by ambience cues and day progression.
   sessionMilestones: {
@@ -58,15 +56,21 @@ const formatHourMinute = (hour24, minute) => {
 
 export const getWatchClockFromElapsed = (
   elapsedRealSeconds = 0,
+  durationRealSeconds = NEEDS_CONFIG.gameDuration,
   config = NEEDS_CONFIG
 ) => {
-  const watchSecondRealSeconds = toPositiveNumber(config.watchSecondRealSeconds, 0.1)
+  const durationSeconds = toPositiveNumber(
+    durationRealSeconds,
+    NEEDS_CONFIG.gameDuration
+  )
   const startHour24 = Math.max(
     0,
     Math.min(23, Math.floor(toPositiveNumber(config.watchStartHour24, 8)))
   )
 
-  const watchElapsedSeconds = Math.max(0, elapsedRealSeconds) / watchSecondRealSeconds
+  const elapsedSeconds = Math.max(0, Number(elapsedRealSeconds) || 0)
+  const progress = Math.max(0, Math.min(1, elapsedSeconds / durationSeconds))
+  const watchElapsedSeconds = progress * 24 * 60 * 60
   const totalWatchSeconds = startHour24 * 3600 + watchElapsedSeconds
   const dayNumber = Math.floor(totalWatchSeconds / 86400) + 1
   const secondsOfDay = totalWatchSeconds % 86400

@@ -266,12 +266,56 @@ export const createLandlordCallController = (
     }
 
     if (!response.ok) {
-      setError(`Landlord follow-up call failed (${response.status}).`)
+      let failureMessage = `Landlord follow-up call failed (${response.status}).`
+      try {
+        const errorJson = await response.json()
+        if (typeof errorJson?.error === 'string' && errorJson.error.trim()) {
+          failureMessage = errorJson.error
+        }
+      } catch {
+        // Keep generic failure message when response is not JSON.
+      }
+      setError(failureMessage)
       return Promise.resolve()
     }
 
-    const blob = await response.blob()
-    activeObjectUrl = URL.createObjectURL(blob)
+    const contentType = (response.headers.get('content-type') || '').toLowerCase()
+    const sourceBlob = await response.blob()
+    const sourceBlobType = (sourceBlob.type || '').toLowerCase()
+    const isAudioResponse =
+      contentType.includes('audio') || sourceBlobType.startsWith('audio/')
+
+    if (!isAudioResponse) {
+      const bodyPreview = await sourceBlob
+        .text()
+        .then((text) => text.trim().slice(0, 180))
+        .catch(() => '')
+      const mimeLabel = contentType || sourceBlobType || 'unknown'
+      setError(
+        bodyPreview
+          ? `Landlord follow-up call returned non-audio (${mimeLabel}): ${bodyPreview}`
+          : `Landlord follow-up call returned non-audio (${mimeLabel}).`
+      )
+      return Promise.resolve()
+    }
+
+    const normalizedBlob = sourceBlobType.startsWith('audio/')
+      ? sourceBlob
+      : new Blob([await sourceBlob.arrayBuffer()], { type: 'audio/mpeg' })
+
+    if (normalizedBlob.size === 0) {
+      setError('Landlord follow-up call returned empty audio.')
+      return Promise.resolve()
+    }
+
+    logAudio('outcome audio response', {
+      status: response.status,
+      contentType,
+      blobType: normalizedBlob.type,
+      size: normalizedBlob.size,
+    })
+
+    activeObjectUrl = URL.createObjectURL(normalizedBlob)
     setAudioSource(activeObjectUrl)
     return playFromCurrentSource()
   }

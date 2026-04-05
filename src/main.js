@@ -25,6 +25,7 @@ import {
   NEEDS_CONFIG,
   PlayerNeedsSession,
   getSessionCompletionPercent,
+  getWatchClockFromElapsed,
 } from './components/needs/index.js'
 import { ZoneSystem } from './components/needs/zones.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
@@ -612,6 +613,16 @@ renderer.setAnimationLoop(() => {
       completionPercent >= NIGHT_COMPLETION_PERCENT
     ) {
       hasPlayedNightSound = true
+      const nightClock = getWatchClockFromElapsed(
+        sessionState.elapsed,
+        sessionState.duration,
+        NEEDS_CONFIG
+      )
+      console.log('[needs][milestone] night reached at', {
+        completionPercent: Math.round(completionPercent * 10) / 10,
+        watchTime: nightClock.timeLabel,
+        watchDay: nightClock.dayLabel,
+      })
       void playMilestoneSound(nightAudio, 'night')
     }
 
@@ -621,6 +632,16 @@ renderer.setAnimationLoop(() => {
       completionPercent >= NEXT_MORNING_COMPLETION_PERCENT
     ) {
       hasPlayedNextMorningSound = true
+      const morningClock = getWatchClockFromElapsed(
+        sessionState.elapsed,
+        sessionState.duration,
+        NEEDS_CONFIG
+      )
+      console.log('[needs][milestone] next morning reached at', {
+        completionPercent: Math.round(completionPercent * 10) / 10,
+        watchTime: morningClock.timeLabel,
+        watchDay: morningClock.dayLabel,
+      })
       void playMilestoneSound(nextMorningAudio, 'next-morning')
     }
 
