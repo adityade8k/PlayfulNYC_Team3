@@ -42,9 +42,11 @@ const SPACE_CONFLICTS = {
 export class InteractionSystem {
   /**
    * @param {object} playerNeedsSession - your PlayerNeedsSession instance
+   * @param {function} broadcastGlobal  - from multiplayer.js, syncs state to all clients
    */
-  constructor(playerNeedsSession) {
+  constructor(playerNeedsSession, broadcastGlobal = null) {
     this.session = playerNeedsSession
+    this._broadcast = broadcastGlobal
 
     // Current state of each furniture piece
     this.furnitureState = {
@@ -125,6 +127,7 @@ export class InteractionSystem {
     this.furnitureState[furnitureId] = isNowOn
     console.log(`[interactions] ${furnitureId} is now ${isNowOn ? 'ON' : 'OFF'}`)
     this.onFurnitureToggled?.(furnitureId, isNowOn)
+    this._broadcastState()
   }
 
   /**
@@ -265,6 +268,29 @@ export class InteractionSystem {
     return {
       furniture:    { ...this.furnitureState },
       activeRefills: { ...this._playerActiveObject },
+    }
+  }
+
+  // ── Network sync ──────────────────────────────────────────────
+
+  /** Sends furniture state to all clients via broadcastGlobal */
+  _broadcastState() {
+    this._broadcast?.('apartmentState', { furniture: { ...this.furnitureState } })
+  }
+
+  /**
+   * Call this when you receive an 'apartmentState' update from another client.
+   * Applies their furniture state locally and fires the toggle callbacks
+   * so animations stay in sync.
+   * @param {object} remoteState - value from synchronize('apartmentState')
+   */
+  applyRemoteState(remoteState) {
+    if (!remoteState?.furniture) return
+    for (const [furnitureId, isOn] of Object.entries(remoteState.furniture)) {
+      if (this.furnitureState[furnitureId] !== isOn) {
+        this.furnitureState[furnitureId] = isOn
+        this.onFurnitureToggled?.(furnitureId, isOn)
+      }
     }
   }
 }
