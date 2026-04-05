@@ -9,7 +9,15 @@
 // Tweak DECAY_RATES and FILL_RATES to change game feel.
 
 export const NEEDS_CONFIG = {
-  gameDuration: 600,        // seconds (10 min default — change freely)
+  gameDuration: 30,        // seconds (default 60s; change freely)
+  // Optional watch start hour (24h format). The watch advances
+  // through a full 24-hour cycle over gameDuration.
+  watchStartHour24: 8,
+  // Session milestones (% complete) used by ambience cues and day progression.
+  sessionMilestones: {
+    nightCompletionPercent: 50,
+    nextMorningCompletionPercent: 90,
+  },
 
   // How fast each bar drains per second (0–100 scale)
   decayRates: {
@@ -33,6 +41,58 @@ export const NEEDS_CONFIG = {
     green:  60,   // above this = green
     yellow: 30,   // above this = yellow, below = red
   },
+}
+
+const toPositiveNumber = (value, fallback) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const formatHourMinute = (hour24, minute) => {
+  const period = hour24 >= 12 ? 'PM' : 'AM'
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12
+  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`
+}
+
+export const getWatchClockFromElapsed = (
+  elapsedRealSeconds = 0,
+  durationRealSeconds = NEEDS_CONFIG.gameDuration,
+  config = NEEDS_CONFIG
+) => {
+  const durationSeconds = toPositiveNumber(
+    durationRealSeconds,
+    NEEDS_CONFIG.gameDuration
+  )
+  const startHour24 = Math.max(
+    0,
+    Math.min(23, Math.floor(toPositiveNumber(config.watchStartHour24, 8)))
+  )
+
+  const elapsedSeconds = Math.max(0, Number(elapsedRealSeconds) || 0)
+  const progress = Math.max(0, Math.min(1, elapsedSeconds / durationSeconds))
+  const watchElapsedSeconds = progress * 24 * 60 * 60
+  const totalWatchSeconds = startHour24 * 3600 + watchElapsedSeconds
+  const dayNumber = Math.floor(totalWatchSeconds / 86400) + 1
+  const secondsOfDay = totalWatchSeconds % 86400
+  const hour24 = Math.floor(secondsOfDay / 3600)
+  const minute = Math.floor((secondsOfDay % 3600) / 60)
+
+  return {
+    dayNumber,
+    hour24,
+    minute,
+    timeLabel: formatHourMinute(hour24, minute),
+    dayLabel: `DAY ${dayNumber}`,
+  }
+}
+
+export const getSessionCompletionPercent = (
+  elapsedRealSeconds = 0,
+  durationSeconds = NEEDS_CONFIG.gameDuration
+) => {
+  const duration = toPositiveNumber(durationSeconds, NEEDS_CONFIG.gameDuration)
+  const elapsed = Math.max(0, Number(elapsedRealSeconds) || 0)
+  return Math.max(0, Math.min(100, (elapsed / duration) * 100))
 }
 
 // ── Shame event messages ──────────────────────────────────────

@@ -6,7 +6,7 @@ export const createWatchScreenCanvas = () => {
   canvas.height = 1024
   const context = canvas.getContext('2d')
 
-  const render = (state, elapsedMs = 0) => {
+  const render = (state, elapsedMs = 0, watchClock = null) => {
     context.clearRect(0, 0, canvas.width, canvas.height)
 
     const background = context.createLinearGradient(0, 0, canvas.width, canvas.height)
@@ -29,7 +29,7 @@ export const createWatchScreenCanvas = () => {
     context.fillStyle = vignette
     context.fillRect(0, 0, canvas.width, canvas.height)
 
-    drawStatusLine(context)
+    drawStatusLine(context, watchClock)
     if (state.screen === 'incoming-call') {
       drawIncomingCall(context, state, elapsedMs)
     } else {
@@ -46,9 +46,10 @@ export const createLandlordCallController = (
     endpoint = '/api/landlord-call',
     autoAdvanceOnError = false,
     onStatus = () => {},
+    onFinished = () => {},
   } = {}
 ) => {
-  const audio = new Audio(endpoint)
+  const audio = new Audio()
   audio.preload = 'auto'
   audio.playsInline = true
   audio.crossOrigin = 'anonymous'
@@ -56,6 +57,8 @@ export const createLandlordCallController = (
   let startPromise = null
   let primed = false
   let audioUnlocked = false
+  let activeObjectUrl = null
+  let activeCallKind = 'intro'
 
   const logAudio = (message, extra = null) => {
     if (extra) {
@@ -72,12 +75,30 @@ export const createLandlordCallController = (
     }
   }
 
+  const revokeObjectUrl = () => {
+    if (!activeObjectUrl) return
+    URL.revokeObjectURL(activeObjectUrl)
+    activeObjectUrl = null
+  }
+
+  const setAudioSource = (sourceUrl) => {
+    if (audio.src === sourceUrl) return
+    audio.src = sourceUrl
+    audio.load()
+  }
+
   const advanceToStats = () => {
     clearTimer()
     logAudio('landlord call finished, switching to stats')
     store.setCallState({ speaking: false, finished: true })
     store.setScreen('stats')
+    if (activeCallKind === 'outcome') {
+      onStatus('Landlord outcome call finished.')
+      return
+    }
+    onStatus('Landlord call finished.')
     onStatus('Landlord intro finished. Stats screen is live.')
+    onFinished()
   }
 
   const setError = (message) => {
@@ -97,7 +118,7 @@ export const createLandlordCallController = (
   }
 
   audio.addEventListener('loadstart', () => {
-    logAudio('loadstart', { src: endpoint })
+    logAudio('loadstart', { src: audio.src })
   })
   audio.addEventListener('loadedmetadata', () => {
     logAudio('loadedmetadata', { duration: audio.duration })
@@ -131,7 +152,7 @@ export const createLandlordCallController = (
     if (primed) return
     primed = true
     logAudio('priming audio', { endpoint })
-    audio.load()
+    setAudioSource(endpoint)
     fetch(endpoint, { cache: 'force-cache' })
       .then((response) => {
         logAudio('prefetch response', {
@@ -147,36 +168,7 @@ export const createLandlordCallController = (
       })
   }
 
-  const unlockAudio = async () => {
-    primeAudio()
-    if (audioUnlocked) {
-      logAudio('unlockAudio skipped, already unlocked')
-      return true
-    }
-
-    const previousMuted = audio.muted
-    try {
-      audio.muted = true
-      audio.currentTime = 0
-      logAudio('unlockAudio attempting silent play')
-      await audio.play()
-      audio.pause()
-      audio.currentTime = 0
-      audioUnlocked = true
-      logAudio('unlockAudio succeeded')
-      return true
-    } catch (error) {
-      logAudio('unlockAudio failed', {
-        message: error instanceof Error ? error.message : String(error),
-      })
-      return false
-    } finally {
-      audio.muted = previousMuted
-    }
-  }
-
-  const startCall = async () => {
-    primeAudio()
+  const playFromCurrentSource = async ({ screen = 'incoming-call' } = {}) => {
     clearTimer()
     if (startPromise) return startPromise
     audio.pause()
@@ -187,7 +179,7 @@ export const createLandlordCallController = (
       networkState: audio.networkState,
     })
 
-    store.setScreen('incoming-call')
+    store.setScreen(screen)
     store.setCallState({
       started: true,
       audioReady: false,
@@ -224,15 +216,128 @@ export const createLandlordCallController = (
     return startPromise
   }
 
+  const unlockAudio = async () => {
+    primeAudio()
+    if (audioUnlocked) {
+      logAudio('unlockAudio skipped, already unlocked')
+      return true
+    }
+
+    const previousMuted = audio.muted
+    try {
+      audio.muted = true
+      audio.currentTime = 0
+      logAudio('unlockAudio attempting silent play')
+      await audio.play()
+      audio.pause()
+      audio.currentTime = 0
+      audioUnlocked = true
+      logAudio('unlockAudio succeeded')
+      return true
+    } catch (error) {
+      logAudio('unlockAudio failed', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    } finally {
+      audio.muted = previousMuted
+    }
+  }
+
+  const startCall = async () => {
+    activeCallKind = 'intro'
+    primeAudio()
+    revokeObjectUrl()
+    setAudioSource(endpoint)
+    return playFromCurrentSource({ screen: 'incoming-call' })
+  }
+
+  const startOutcomeCall = async (payload = {}) => {
+    activeCallKind = 'outcome'
+    clearTimer()
+    revokeObjectUrl()
+    let response
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? `Landlord follow-up call failed: ${error.message}`
+          : 'Landlord follow-up call failed.'
+      )
+      return Promise.resolve()
+    }
+
+    if (!response.ok) {
+      let failureMessage = `Landlord follow-up call failed (${response.status}).`
+      try {
+        const errorJson = await response.json()
+        if (typeof errorJson?.error === 'string' && errorJson.error.trim()) {
+          failureMessage = errorJson.error
+        }
+      } catch {
+        // Keep generic failure message when response is not JSON.
+      }
+      setError(failureMessage)
+      return Promise.resolve()
+    }
+
+    const contentType = (response.headers.get('content-type') || '').toLowerCase()
+    const sourceBlob = await response.blob()
+    const sourceBlobType = (sourceBlob.type || '').toLowerCase()
+    const isAudioResponse =
+      contentType.includes('audio') || sourceBlobType.startsWith('audio/')
+
+    if (!isAudioResponse) {
+      const bodyPreview = await sourceBlob
+        .text()
+        .then((text) => text.trim().slice(0, 180))
+        .catch(() => '')
+      const mimeLabel = contentType || sourceBlobType || 'unknown'
+      setError(
+        bodyPreview
+          ? `Landlord follow-up call returned non-audio (${mimeLabel}): ${bodyPreview}`
+          : `Landlord follow-up call returned non-audio (${mimeLabel}).`
+      )
+      return Promise.resolve()
+    }
+
+    const normalizedBlob = sourceBlobType.startsWith('audio/')
+      ? sourceBlob
+      : new Blob([await sourceBlob.arrayBuffer()], { type: 'audio/mpeg' })
+
+    if (normalizedBlob.size === 0) {
+      setError('Landlord follow-up call returned empty audio.')
+      return Promise.resolve()
+    }
+
+    logAudio('outcome audio response', {
+      status: response.status,
+      contentType,
+      blobType: normalizedBlob.type,
+      size: normalizedBlob.size,
+    })
+
+    activeObjectUrl = URL.createObjectURL(normalizedBlob)
+    setAudioSource(activeObjectUrl)
+    return playFromCurrentSource({ screen: 'stats' })
+  }
+
   return {
     primeAudio,
     unlockAudio,
     startCall,
+    startOutcomeCall,
     replayCall: startCall,
     skipToStats: advanceToStats,
     dispose() {
       clearTimer()
       audio.pause()
+      revokeObjectUrl()
     },
   }
 }
@@ -249,13 +354,19 @@ export const describeWatchStatus = (state) => {
   return 'Stats are live on the watch and can be updated globally.'
 }
 
-const drawStatusLine = (context) => {
+const drawStatusLine = (context, watchClock = null) => {
   context.textAlign = 'left'
   const now = new Date()
-  const timeLabel = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  const dayLabel = now
-    .toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
-    .toUpperCase()
+  const timeLabel =
+    typeof watchClock?.timeLabel === 'string'
+      ? watchClock.timeLabel
+      : now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const dayLabel =
+    typeof watchClock?.dayLabel === 'string'
+      ? watchClock.dayLabel
+      : now
+          .toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+          .toUpperCase()
 
   context.fillStyle = 'rgba(255,255,255,0.92)'
   context.font = '600 56px "Avenir Next", sans-serif'
@@ -303,8 +414,12 @@ const drawIncomingCall = (context, state, elapsedMs) => {
 
 const drawStats = (context, state) => {
   const columns = [86, 530]
-  const startY = 286
-  const rowHeight = 194
+  const hasSessionSummary = Boolean(state.sessionSummary)
+  const summaryBottomY = hasSessionSummary
+    ? drawTeamSummary(context, state.sessionSummary)
+    : 0
+  const startY = hasSessionSummary ? summaryBottomY + 82 : 286
+  const rowHeight = 184
   const barWidth = 308
   const barHeight = 54
   context.textAlign = 'left'
@@ -344,6 +459,65 @@ const drawStats = (context, state) => {
     roundRect(context, x + 101, y + 45, fillWidth, barHeight - 10, 19)
     context.fill()
   })
+}
+
+const drawTeamSummary = (context, sessionSummary) => {
+  const x = 78
+  const y = 198
+  const width = 868
+  const height = 164
+  const teamScoreLabel =
+    Number.isFinite(sessionSummary?.teamScore) ? `${sessionSummary.teamScore}%` : '--'
+  const stars = Math.max(
+    0,
+    Math.min(3, Number.isFinite(sessionSummary?.teamStars) ? sessionSummary.teamStars : 0)
+  )
+  const tenantLines = Array.isArray(sessionSummary?.summaries)
+    ? sessionSummary.summaries
+        .slice(0, 2)
+        .map((summary, index) =>
+          `${formatTenantLabel(summary.playerId, index)}: ${summary.overallScore}%`
+        )
+    : []
+
+  context.fillStyle = 'rgba(7, 27, 33, 0.32)'
+  roundRect(context, x, y, width, height, 28)
+  context.fill()
+
+  context.fillStyle = 'rgba(255,255,255,0.95)'
+  context.font = '700 34px "Avenir Next", sans-serif'
+  context.fillText('Tenant Review', x + 34, y + 50)
+  context.font = '900 66px "Avenir Next", sans-serif'
+  context.fillText(teamScoreLabel, x + 32, y + 122)
+
+  context.textAlign = 'right'
+  context.font = '700 30px "Avenir Next", sans-serif'
+  context.fillStyle = 'rgba(255,255,255,0.9)'
+  context.fillText(starsToText(stars), x + width - 30, y + 50)
+
+  if (tenantLines.length > 0) {
+    context.font = '600 24px "Avenir Next", sans-serif'
+    context.fillStyle = 'rgba(255,255,255,0.84)'
+    context.fillText(tenantLines[0], x + width - 30, y + 94)
+    if (tenantLines[1]) {
+      context.fillText(tenantLines[1], x + width - 30, y + 128)
+    }
+  }
+
+  context.textAlign = 'left'
+  return y + height
+}
+
+const starsToText = (stars) => {
+  const full = '\u2605'.repeat(stars)
+  const empty = '\u2606'.repeat(Math.max(0, 3 - stars))
+  return `${full}${empty}`
+}
+
+const formatTenantLabel = (playerId, fallbackIndex = 0) => {
+  const match = String(playerId || '').match(/(\d+)/)
+  const tenantNumber = Number(match?.[1] || fallbackIndex + 1)
+  return `Tenant ${Math.max(1, tenantNumber)}`
 }
 
 const getNeedColor = (value) => {

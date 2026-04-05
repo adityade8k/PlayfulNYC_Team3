@@ -22,11 +22,20 @@ import {
   createDefaultSharedState,
 } from '../shared/default-state.js'
 import {
+<<<<<<< HEAD
+  NEEDS_CONFIG,
+  PlayerNeedsSession,
+  getSessionCompletionPercent,
+  getWatchClockFromElapsed,
+} from './components/needs/index.js'
+=======
   ENVIRONMENT_ANIMATION_STATE_CONFIG,
   createEnvironmentAnimationStateController,
 } from './animation/environment-state-controller.js'
 import { PlayerNeedsSession } from './components/needs/index.js'
+>>>>>>> master
 import { ZoneSystem } from './components/needs/zones.js'
+import { InteractionSystem } from './components/needs/interactions.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
 
 const getNeedsPlayerIdForSnapshot = (snapshot) => {
@@ -165,6 +174,34 @@ void gltfLoader
 const playerNeedsSession = new PlayerNeedsSession()
 playerNeedsSession.addPlayer('player_1')
 playerNeedsSession.addPlayer('player_2')
+playerNeedsSession.onSessionEnd = (summaries) => {
+  console.log('[needs] game over', summaries)
+
+  const teamScore = Math.round(
+    (summaries[0].overallScore + summaries[1].overallScore) / 2
+  )
+
+  const teamStars = teamScore >= 80 ? 3
+                  : teamScore >= 50 ? 2
+                  : teamScore >= 25 ? 1
+                  : 0
+
+  const allShameEvents = summaries.flatMap((summary) =>
+    Object.entries(summary.shameSummary || {}).map(([need, data]) => ({
+      playerId: summary.playerId,
+      need,
+      count: data.count,
+      message: data.messages[0],
+    }))
+  )
+
+  const endData = { summaries, teamScore, teamStars, allShameEvents }
+  broadcastGlobal('needsSummary', endData)
+
+  if (!smartWatch) return
+  smartWatch.showStats(endData)
+  void smartWatch.startOutcomeCall(summaries)
+}
 
 const spawnMarkerColors = ['#44ff88', '#4488ff']
 for (let index = 0; index < PLAYER_SPAWN_POINTS.length; index += 1) {
@@ -208,6 +245,7 @@ const calibrationSystem = createCalibrationSystem({
 })
 let smartWatch = null
 let zoneSystem = null
+let interactionSystem = null
 let hasStartedNeedsSession = false
 let hasTriggeredLandlordIntro = false
 window.render_game_to_text = () =>
@@ -216,13 +254,13 @@ window.render_game_to_text = () =>
     detail: 'Smart watch and gameplay systems initialize after shared-scene entry.',
   })
 const ensurePostCalibrationSystemsInitialized = () => {
-  if (!hasStartedNeedsSession) {
-    playerNeedsSession.start()
-    hasStartedNeedsSession = true
-  }
-
   if (!zoneSystem) {
     zoneSystem = new ZoneSystem(sharedSceneGroup, { debug: true })
+  }
+
+  if (!interactionSystem) {
+    interactionSystem = new InteractionSystem(playerNeedsSession, broadcastGlobal)
+    window.interactionSystem = interactionSystem
   }
 
   if (!smartWatch) {
@@ -231,6 +269,15 @@ const ensurePostCalibrationSystemsInitialized = () => {
       camera,
       renderer,
       playerNeedsSession,
+      onLandlordFinished: () => {
+        if (hasStartedNeedsSession) return
+        playerNeedsSession.start()
+        hasStartedNeedsSession = true
+        hasPlayedNightSound = false
+        hasPlayedNextMorningSound = false
+        previousNeedsCompletionPercent = 0
+        console.log('[needs] session started after landlord intro finished')
+      },
     })
     window.render_game_to_text = smartWatch.renderGameToText
   }
@@ -322,6 +369,30 @@ let calibrationResult = null
 let isSharedSceneActive = false
 let lastIntroWaitReason = ''
 let introFallbackDeadlineAt = null
+let hasPlayedNightSound = false
+let hasPlayedNextMorningSound = false
+let previousNeedsCompletionPercent = 0
+const NIGHT_COMPLETION_PERCENT =
+  Number(NEEDS_CONFIG.sessionMilestones?.nightCompletionPercent) || 50
+const NEXT_MORNING_COMPLETION_PERCENT =
+  Number(NEEDS_CONFIG.sessionMilestones?.nextMorningCompletionPercent) || 90
+const nightAudio = new Audio('/sounds/cricket.mp3')
+nightAudio.preload = 'auto'
+const nextMorningAudio = new Audio('/sounds/bird.mp3')
+nextMorningAudio.preload = 'auto'
+
+const playMilestoneSound = async (audio, label) => {
+  try {
+    audio.currentTime = 0
+    await audio.play()
+    console.log(`[needs][milestone] played ${label} sound`)
+  } catch (error) {
+    console.warn(
+      `[needs][milestone] failed to play ${label} sound:`,
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+}
 
 const pushSharedState = () => {
   setGlobal('sharedState', sharedState)
@@ -537,6 +608,9 @@ renderer.xr.addEventListener('sessionstart', () => {
   hasTriggeredLandlordIntro = false
   lastIntroWaitReason = ''
   introFallbackDeadlineAt = null
+  hasPlayedNightSound = false
+  hasPlayedNextMorningSound = false
+  previousNeedsCompletionPercent = 0
   const snapshot = getSnapshot()
   const selfPlayer = snapshot.players?.[snapshot.selfId]
   tryApplyLocalSpawnReferenceSpace(snapshot)
@@ -558,9 +632,13 @@ renderer.xr.addEventListener('sessionend', () => {
   sharedSceneGroup.visible = false
   calibrationResult = null
   hasAppliedSpawnReferenceSpace = false
+  hasStartedNeedsSession = false
   hasTriggeredLandlordIntro = false
   lastIntroWaitReason = ''
   introFallbackDeadlineAt = null
+  hasPlayedNightSound = false
+  hasPlayedNextMorningSound = false
+  previousNeedsCompletionPercent = 0
   calibrationSystem.endSession()
   updateLocalPlayer({ isInAr: false })
 })
@@ -627,9 +705,59 @@ renderer.setAnimationLoop(() => {
   }
   if (isInAr && isSharedSceneActive && hasStartedNeedsSession) {
     playerNeedsSession.update(deltaSeconds)
+    const sessionState = playerNeedsSession.getState()
+    const completionPercent = getSessionCompletionPercent(
+      sessionState.elapsed,
+      sessionState.duration
+    )
+
+    if (
+      !hasPlayedNightSound &&
+      previousNeedsCompletionPercent < NIGHT_COMPLETION_PERCENT &&
+      completionPercent >= NIGHT_COMPLETION_PERCENT
+    ) {
+      hasPlayedNightSound = true
+      const nightClock = getWatchClockFromElapsed(
+        sessionState.elapsed,
+        sessionState.duration,
+        NEEDS_CONFIG
+      )
+      console.log('[needs][milestone] night reached at', {
+        completionPercent: Math.round(completionPercent * 10) / 10,
+        watchTime: nightClock.timeLabel,
+        watchDay: nightClock.dayLabel,
+      })
+      void playMilestoneSound(nightAudio, 'night')
+    }
+
+    if (
+      !hasPlayedNextMorningSound &&
+      previousNeedsCompletionPercent < NEXT_MORNING_COMPLETION_PERCENT &&
+      completionPercent >= NEXT_MORNING_COMPLETION_PERCENT
+    ) {
+      hasPlayedNextMorningSound = true
+      const morningClock = getWatchClockFromElapsed(
+        sessionState.elapsed,
+        sessionState.duration,
+        NEEDS_CONFIG
+      )
+      console.log('[needs][milestone] next morning reached at', {
+        completionPercent: Math.round(completionPercent * 10) / 10,
+        watchTime: morningClock.timeLabel,
+        watchDay: morningClock.dayLabel,
+      })
+      void playMilestoneSound(nextMorningAudio, 'next-morning')
+    }
+
+    previousNeedsCompletionPercent = completionPercent
   }
   if (isInAr && isSharedSceneActive && zoneSystem) {
     zoneSystem.update(snapshot.players, snapshot.selfId, localBodyPosition, playerNeedsSession)
+  }
+  if (isInAr && isSharedSceneActive && interactionSystem) {
+    const remoteApartmentState = synchronize('apartmentState')
+    if (remoteApartmentState) interactionSystem.applyRemoteState(remoteApartmentState)
+    interactionSystem.update()
   }
   renderer.render(scene, camera)
 })

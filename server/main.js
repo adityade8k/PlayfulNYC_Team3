@@ -30,6 +30,7 @@ const keyPath = process.env.HTTPS_KEY_PATH || process.env.SSL_KEY_PATH
 const certPath = process.env.HTTPS_CERT_PATH || process.env.SSL_CERT_PATH
 
 const app = express()
+app.use(express.json({ limit: '256kb' }))
 
 registerLandlordCallRoute(app, {
   envFiles: [
