@@ -89,7 +89,6 @@ sharedSceneGroup.add(floor)
 const playerNeedsSession = new PlayerNeedsSession()
 playerNeedsSession.addPlayer('player_1')
 playerNeedsSession.addPlayer('player_2')
-
 playerNeedsSession.onSessionEnd = (summaries) => {
   console.log('[needs] game over', summaries)
 
@@ -102,9 +101,9 @@ playerNeedsSession.onSessionEnd = (summaries) => {
                   : teamScore >= 25 ? 1
                   : 0
 
-  const allShameEvents = summaries.flatMap(s =>
-    Object.entries(s.shameSummary || {}).map(([need, data]) => ({
-      playerId: s.playerId,
+  const allShameEvents = summaries.flatMap((summary) =>
+    Object.entries(summary.shameSummary || {}).map(([need, data]) => ({
+      playerId: summary.playerId,
       need,
       count: data.count,
       message: data.messages[0],
@@ -112,18 +111,10 @@ playerNeedsSession.onSessionEnd = (summaries) => {
   )
 
   const endData = { summaries, teamScore, teamStars, allShameEvents }
-
-  console.log('[needs] end data', endData)
   broadcastGlobal('needsSummary', endData)
 
-  // Llamar al outcome call del smartwatch (compañera)
-  if (smartWatch) void smartWatch.startOutcomeCall(summaries)
-}
-
-playerNeedsSession.onSessionEnd = (summaries) => {
-  console.log('[needs] session ended, starting landlord verdict call', summaries)
-  broadcastGlobal('needsSummary', summaries)
   if (!smartWatch) return
+  smartWatch.showStats()
   void smartWatch.startOutcomeCall(summaries)
 }
 

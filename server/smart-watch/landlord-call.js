@@ -4,6 +4,9 @@ const DEFAULT_INTRO_SCRIPT =
   "Hello, welcome to New York! and welcome to your potentially new apartment and new roommate. It's really nice one right? I'm also a nice guy and would love you guys to get along with each other, so I'm giving you two a free 1 day 1 night stay at this apartment to figure out if you all will be good compatibility. Just make sure that you satisfy all your needs, always make sure your physical and mental well being is good, especially in a stressful city as New York! But, I want to also see how you respect your other roommates wellbeing. Work amongst yourself. Ok i'll leave you all to your own privacy, i may check in on you guys from time to time and you can check your stats on your wristband. See yall tomorrow!"
 
 const DEFAULT_PASS_THRESHOLD = 70
+const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+const NEED_KEYS = ['hunger', 'poop', 'shower', 'sleep']
 
 const KNOWN_FALLBACKS = [
   'pNInz6obpgDQGcFmaJgB',
@@ -18,10 +21,13 @@ export const registerLandlordCallRoute = (
     script = DEFAULT_INTRO_SCRIPT,
     envFiles = [],
     modelId = 'eleven_flash_v2_5',
+    geminiModel = DEFAULT_GEMINI_MODEL,
   } = {}
 ) => {
   for (const envFile of envFiles) loadEnvFile(envFile)
   const resolvedModelId = process.env.ELEVENLABS_MODEL_ID || modelId
+  const resolvedGeminiModel =
+    process.env.GEMINI_MODEL_ID || process.env.GEMINI_MODEL || geminiModel
 
   let introAudioBuffer = null
   let inflightIntro = null
@@ -103,7 +109,12 @@ export const registerLandlordCallRoute = (
       }
 
       const outcome = evaluateCompatibility(summaries, passThreshold)
-      const outcomeScript = buildOutcomeScript(outcome)
+      const outcomeScript = await buildOutcomeScript({
+        ...outcome,
+        passThreshold,
+        geminiModel: resolvedGeminiModel,
+        timeoutMs: requestTimeoutMs,
+      })
       const audio = await synthesizeLandlordAudio({
         script: outcomeScript,
         modelId: resolvedModelId,
@@ -129,16 +140,27 @@ export const registerLandlordCallRoute = (
 
 const normalizeSummaries = (summaries) => {
   if (!Array.isArray(summaries)) return []
+
   return summaries
     .map((summary, index) => {
       const overallScore = clampPercent(summary?.overallScore, null)
       if (overallScore === null) return null
+
+      const needScores = Object.fromEntries(
+        NEED_KEYS.map((needKey) => [
+          needKey,
+          clampPercent(summary?.needScores?.[needKey], 0),
+        ])
+      )
+
       return {
         playerId:
           typeof summary?.playerId === 'string' && summary.playerId.trim().length > 0
             ? summary.playerId.trim()
             : `player_${index + 1}`,
         overallScore,
+        needScores,
+        totalShameEvents: toNonNegativeInteger(summary?.totalShameEvents, 0),
       }
     })
     .filter(Boolean)
@@ -148,24 +170,146 @@ const evaluateCompatibility = (summaries, passThreshold) => {
   const players = summaries.slice(0, 2)
   const hasTwoPlayers = players.length === 2
   const pass = hasTwoPlayers && players.every((player) => player.overallScore > passThreshold)
-  return {
-    pass,
-    passThreshold,
-    players,
-  }
+  return { pass, players }
 }
 
-const buildOutcomeScript = ({ pass, passThreshold, players }) => {
-  const templateLine = players
-    .map((player) => `Hello hello my future tenants!`)
-    .join(', ')
+const buildOutcomeScript = async ({
+  pass,
+  passThreshold,
+  players,
+  geminiModel,
+  timeoutMs,
+}) => {
+  const templateLine = 'Hello hello my future tenants!'
+  let reviewText = ''
+
+  try {
+    reviewText = await generateReviewWithGemini({
+      pass,
+      passThreshold,
+      players,
+      modelId: geminiModel,
+      timeoutMs,
+    })
+  } catch (error) {
+    console.warn(
+      '[smart-watch][landlord-call] Gemini review fallback:',
+      error instanceof Error ? error.message : String(error)
+    )
+    reviewText = buildDeterministicReview(players)
+  }
 
   if (pass) {
-    return `${templateLine} So it seems like you two are a great match, respectful to each other. Congrats! I love you guys to be my tenants.`
+    return compactWhitespace(
+      `${templateLine} ${reviewText} So it seems like you two are a great match, respectful to each other. Congrats! I love you guys to be my tenants.`
+    )
   }
 
-  return `${templateLine} Hmm.. I've been receiving some complaints. Not sure if you two are a good match. Are you sure you guys have respected each other needs? I don't think yall ready to rent this place right now. You can come back another time to see if i still have room in the future tho!`
+  return compactWhitespace(
+    `${templateLine} ${reviewText} Hmm.. I've been receiving some complaints. Not sure if you two are a good match. Are you sure you guys have respected each other needs? I don't think yall ready to rent this place right now. You can come back another time to see if i still have room in the future tho!`
+  )
 }
+
+const generateReviewWithGemini = async ({
+  pass,
+  passThreshold,
+  players,
+  modelId,
+  timeoutMs,
+}) => {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) {
+    throw new Error('Missing GEMINI_API_KEY.')
+  }
+
+  const reviewPayload = players.map((player) => ({
+    playerId: player.playerId,
+    overallScore: player.overallScore,
+    needScores: player.needScores,
+    totalShameEvents: player.totalShameEvents,
+  }))
+
+  const prompt = [
+    'Write ONLY the landlord verbal review section in plain text.',
+    'Do not include greeting or final pass/fail verdict sentence.',
+    'For each player, describe all four health stats: hunger, poop, shower, sleep.',
+    'Mention numeric percentages for each stat.',
+    'Keep it conversational, landlord tone, 4 to 8 sentences total.',
+    `Decision context: pass=${pass}, threshold=${passThreshold}.`,
+    `Player stats JSON: ${JSON.stringify(reviewPayload)}`,
+  ].join('\n')
+
+  const response = await fetchWithTimeout(
+    `${GEMINI_API_BASE}/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [
+            {
+              text: 'You are a New York landlord giving a spoken evaluation after a roommate compatibility trial.',
+            },
+          ],
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 220,
+        },
+      }),
+    },
+    timeoutMs,
+    'Gemini generateContent request'
+  )
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Gemini request failed (${response.status}): ${errorText.slice(0, 220)}`)
+  }
+
+  const payload = await response.json()
+  const text = extractGeminiText(payload)
+  if (!text) throw new Error('Gemini response did not include text.')
+
+  return compactWhitespace(text)
+}
+
+const extractGeminiText = (payload) => {
+  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : []
+  const chunks = []
+
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []
+    for (const part of parts) {
+      if (typeof part?.text === 'string' && part.text.trim()) {
+        chunks.push(part.text.trim())
+      }
+    }
+  }
+
+  return chunks.join(' ').trim()
+}
+
+const buildDeterministicReview = (players) =>
+  players
+    .map((player) => {
+      const needsLine = NEED_KEYS.map(
+        (needKey) => `${needKey} ${player.needScores[needKey]} percent`
+      ).join(', ')
+      return `${player.playerId} finished with overall ${player.overallScore} percent: ${needsLine}.`
+    })
+    .join(' ')
+
+const compactWhitespace = (text) =>
+  String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
 
 const loadEnvFile = (filePath) => {
   if (!filePath || !fs.existsSync(filePath)) return
@@ -325,4 +469,10 @@ const clampPercent = (rawValue, fallback) => {
   const parsed = Number(rawValue)
   if (!Number.isFinite(parsed)) return fallback
   return Math.max(0, Math.min(100, Math.round(parsed)))
+}
+
+const toNonNegativeInteger = (rawValue, fallback) => {
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback
+  return Math.floor(parsed)
 }
