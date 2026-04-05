@@ -19,20 +19,20 @@ export const NEEDS_CONFIG = {
 
   // How fast each bar drains per second (0–100 scale)
   decayRates: {
-    hunger: 1.8,            // fastest — you get hungry quick
-    poop:   1.2,            // medium
+    hunger: 1.2,            // fastest — you get hungry quick
+    poop:   1.4,            // medium
     shower: 1.6,            // slow — you can hold it
-    sleep:  1.4, 
-    fun: 1.9          // very slow — long cycle
+    sleep:  0.9, 
+    fun: 1.5          // very slow — long cycle
   },
 
   // How fast each bar fills while player is in the zone
   fillRates: {
-    hunger: 40,             // eating is fast
-    poop:   40,             // bathroom takes a moment
-    shower: 40,             // shower takes longer
-    sleep:  40,
-    fun: 40               // steady fun recovery
+    hunger: 30,             // eating is fast
+    poop:   25,             // bathroom takes a moment
+    shower: 25,             // shower takes longer
+    sleep:  50,
+    fun: 20               // steady fun recovery
   },
 
   // Thresholds for bar color and scoring (0–100)

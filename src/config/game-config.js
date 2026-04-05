@@ -189,7 +189,7 @@ export const GAME_CONFIG = {
     durationSeconds: 180,
     poseBroadcastHz: 20,
     introFallbackDelaySeconds: 0,
-    skipIntroCallAndShowStats: true,
+    skipIntroCallAndShowStats: false,
   },
   debug: {
     zonesVisible: false,

@@ -231,6 +231,8 @@ let localOutcomeCallStarted = false
 let localIntroFinished = false
 let localOutcomeFinished = false
 let localRightGripDown = false
+let hasUnlockedWatchAudio = false
+let isUnlockingWatchAudio = false
 let hasPlayedNightSound = false
 let hasPlayedNextMorningSound = false
 let previousNeedsCompletionPercent = 0
@@ -261,15 +263,15 @@ nightAudio.preload = 'auto'
 const nextMorningAudio = new Audio('/sounds/bird.mp3')
 nextMorningAudio.preload = 'auto'
 const interactionLoopAudioByType = {
-  hunger: new Audio('/kitchen.mp3'),
-  poop: new Audio('/poop.mp3'),
-  shower: new Audio('/shower.mp3'),
-  sleep: new Audio('/snore.mp3'),
-  fun: new Audio('/game.mp3'),
+  hunger: new Audio('/sounds/kitchen.mp3'),
+  poop: new Audio('/sounds/poop.mp3'),
+  shower: new Audio('/sounds/shower.mp3'),
+  sleep: new Audio('/sounds/snore.mp3'),
+  fun: new Audio('/sounds/game.mp3'),
 }
 const interactionOneShotAudio = {
-  drawer: new Audio('/drawer.mp3'),
-  curtain: new Audio('/curtain.mp3'),
+  drawer: new Audio('/sounds/drawer.mp3'),
+  curtain: new Audio('/sounds/curtain.mp3'),
 }
 const interactionSequenceByType = {
   hunger: ['drawer'],
@@ -510,6 +512,19 @@ const smartWatch = createSmartWatchComponent({
 smartWatch.setVisible(false)
 window.render_game_to_text = smartWatch.renderGameToText
 
+const unlockWatchAudioFromGesture = () => {
+  if (hasUnlockedWatchAudio || isUnlockingWatchAudio) return
+  isUnlockingWatchAudio = true
+  void smartWatch
+    .unlockAudio()
+    .then((unlocked) => {
+      hasUnlockedWatchAudio = Boolean(unlocked)
+    })
+    .finally(() => {
+      isUnlockingWatchAudio = false
+    })
+}
+
 if (debugCameraEnabled) {
   const debugCameraConfig = GAME_CONFIG.debug.camera
   camera.position.fromArray(debugCameraConfig.position || [0, 2, 3])
@@ -610,6 +625,13 @@ const isPlayerReadyForIntro = (player) => {
   // treat "in AR" as ready so intro does not stall.
   if (typeof player.readyInSharedScene !== 'boolean') return true
   return player.readyInSharedScene
+}
+
+const getRequiredRoundPlayerCount = (players) => {
+  const participantCount = Object.values(players || {}).filter(
+    (player) => player && (player.slotIndex === 0 || player.slotIndex === 1)
+  ).length
+  return Math.max(1, Math.min(2, participantCount || 1))
 }
 
 const initializeLocalBodyFromHead = () => {
@@ -941,6 +963,7 @@ const consumeSpawnSelectionRequest = () => {
 }
 
 controllerSystem.events.addEventListener('selectstart', (event) => {
+  unlockWatchAudioFromGesture()
   const wasCalibrationTrigger = calibrationSystem.onTriggerPress(
     event.detail.controllerIndex,
     event.detail.intersections
@@ -957,6 +980,7 @@ controllerSystem.events.addEventListener('selectend', (event) =>
   onRelease(`controller-${event.detail.controllerIndex}`, event.detail)
 )
 handTrackingSystem.events.addEventListener('pinchstart', (event) => {
+  unlockWatchAudioFromGesture()
   const wasCalibrationSelection = calibrationSystem.onSpawnSelectionPress(event.detail.intersections)
   consumeSpawnSelectionRequest()
   if (wasCalibrationSelection) return
@@ -1283,8 +1307,13 @@ renderer.setAnimationLoop(() => {
 
   const players = snapshot.players || {}
   const readyPlayers = Object.values(players).filter(isPlayerReadyForIntro)
+  const requiredPlayerCount = getRequiredRoundPlayerCount(players)
 
-  if (host && phase === ROUND_PHASES.waitingForBothPlayers && readyPlayers.length >= 2) {
+  if (
+    host &&
+    phase === ROUND_PHASES.waitingForBothPlayers &&
+    readyPlayers.length >= requiredPlayerCount
+  ) {
     setRoundPhase(
       SKIP_INTRO_CALL_AND_SHOW_STATS ? ROUND_PHASES.playing : ROUND_PHASES.introCall,
       snapshot
@@ -1295,7 +1324,7 @@ renderer.setAnimationLoop(() => {
   // still start the intro call locally so gameplay is not blocked.
   if (
     phase === ROUND_PHASES.waitingForBothPlayers &&
-    readyPlayers.length >= 2 &&
+    readyPlayers.length >= requiredPlayerCount &&
     isSharedSceneActive &&
     !localIntroCallStarted &&
     !SKIP_INTRO_CALL_AND_SHOW_STATS
@@ -1311,7 +1340,7 @@ renderer.setAnimationLoop(() => {
     }
     if (host) {
       const introDoneCount = Object.values(players).filter((player) => player?.introFinished).length
-      if (introDoneCount >= 2) {
+      if (introDoneCount >= requiredPlayerCount) {
         setRoundPhase(ROUND_PHASES.playing, snapshot)
       }
     }
@@ -1450,7 +1479,7 @@ renderer.setAnimationLoop(() => {
     if (host) {
       const doneCount = Object.values(players).filter((player) => player?.outcomeFinished).length
       const timedOut = outcomeFallbackStartedAt !== null && elapsedSeconds >= outcomeFallbackStartedAt
-      if (doneCount >= 2 || timedOut) {
+      if (doneCount >= requiredPlayerCount || timedOut) {
         setRoundPhase(ROUND_PHASES.resetting, snapshot)
       }
     }
