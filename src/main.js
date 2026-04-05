@@ -28,6 +28,7 @@ import {
   getWatchClockFromElapsed,
 } from './components/needs/index.js'
 import { ZoneSystem } from './components/needs/zones.js'
+import { InteractionSystem } from './components/needs/interactions.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
 
 const getNeedsPlayerIdForSnapshot = (snapshot) => {
@@ -175,6 +176,7 @@ const calibrationSystem = createCalibrationSystem({
 })
 let smartWatch = null
 let zoneSystem = null
+let interactionSystem = null
 let hasStartedNeedsSession = false
 let hasTriggeredLandlordIntro = false
 window.render_game_to_text = () =>
@@ -185,6 +187,11 @@ window.render_game_to_text = () =>
 const ensurePostCalibrationSystemsInitialized = () => {
   if (!zoneSystem) {
     zoneSystem = new ZoneSystem(sharedSceneGroup, { debug: true })
+  }
+
+  if (!interactionSystem) {
+    interactionSystem = new InteractionSystem(playerNeedsSession)
+    window.interactionSystem = interactionSystem
   }
 
   if (!smartWatch) {
@@ -649,6 +656,9 @@ renderer.setAnimationLoop(() => {
   }
   if (isInAr && isSharedSceneActive && zoneSystem) {
     zoneSystem.update(snapshot.players, snapshot.selfId, localBodyPosition, playerNeedsSession)
+  }
+  if (isInAr && isSharedSceneActive && interactionSystem) {
+    interactionSystem.update()
   }
   renderer.render(scene, camera)
 })
