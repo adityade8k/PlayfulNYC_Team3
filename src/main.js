@@ -22,18 +22,15 @@ import {
   createDefaultSharedState,
 } from '../shared/default-state.js'
 import {
-<<<<<<< HEAD
   NEEDS_CONFIG,
   PlayerNeedsSession,
   getSessionCompletionPercent,
   getWatchClockFromElapsed,
 } from './components/needs/index.js'
-=======
+import {
   ENVIRONMENT_ANIMATION_STATE_CONFIG,
   createEnvironmentAnimationStateController,
 } from './animation/environment-state-controller.js'
-import { PlayerNeedsSession } from './components/needs/index.js'
->>>>>>> master
 import { ZoneSystem } from './components/needs/zones.js'
 import { InteractionSystem } from './components/needs/interactions.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
@@ -54,6 +51,7 @@ const ENVIRONMENT_STATE_TOGGLE_CUBE_BINDINGS = [
   'kitchen',
   'toilet',
 ]
+const ENVIRONMENT_STATE_NAMES = Object.keys(ENVIRONMENT_ANIMATION_STATE_CONFIG.states)
 
 setGlobal('sharedState', sharedState)
 connectMultiplayer()
@@ -106,6 +104,8 @@ let environmentAnimationMixer = null
 const environmentAnimationActions = []
 let environmentAnimationStateController = null
 const ENABLE_ENVIRONMENT_ANIMATION_TEST = false
+let isReconcilingEnvironmentAnimationState = false
+let pendingEnvironmentAnimationStateSnapshot = null
 
 const gltfLoader = new GLTFLoader()
 void gltfLoader
@@ -139,7 +139,17 @@ void gltfLoader
         actions: environmentAnimationActions,
       })
       console.log('[environment] state-controller ready', environmentAnimationStateController.getSnapshot())
-      syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot())
+      const initialNetworkSharedState = synchronize('sharedState')
+      const initialNetworkAnimationSnapshot = normalizeEnvironmentAnimationStateSnapshot(
+        initialNetworkSharedState?.environmentAnimationStates
+      )
+      if (initialNetworkAnimationSnapshot) {
+        scheduleEnvironmentAnimationStateReconciliation(initialNetworkAnimationSnapshot, 'network-init')
+      } else {
+        syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot(), {
+          shouldBroadcast: false,
+        })
+      }
 
       // Handy manual hooks while debugging in devtools.
       window.setEnvironmentState = (stateName, value) =>
@@ -399,14 +409,129 @@ const pushSharedState = () => {
   broadcastGlobal('sharedState', sharedState)
 }
 
-const syncCubeColorsFromEnvironmentState = (stateSnapshot) => {
+const applySharedStateSnapshotLocally = (snapshot) => {
+  if (!snapshot || typeof snapshot !== 'object') return
+
+  if (Array.isArray(snapshot.cubes)) {
+    sharedState.cubes = snapshot.cubes.map((cubeState, index) => {
+      const fallbackCube = sharedState.cubes[index]
+      const fallbackPosition = Array.isArray(fallbackCube?.position) ? fallbackCube.position : [0, 0, 0]
+      const nextPosition = Array.isArray(cubeState?.position)
+        ? cubeState.position
+        : fallbackPosition
+      return {
+        color:
+          typeof cubeState?.color === 'string'
+            ? cubeState.color
+            : (fallbackCube?.color || 'red'),
+        position: [...nextPosition],
+      }
+    })
+  }
+
+  if (snapshot.environmentAnimationStates && typeof snapshot.environmentAnimationStates === 'object') {
+    const nextEnvironmentAnimationStates = { ...sharedState.environmentAnimationStates }
+    for (let index = 0; index < ENVIRONMENT_STATE_NAMES.length; index += 1) {
+      const stateName = ENVIRONMENT_STATE_NAMES[index]
+      nextEnvironmentAnimationStates[stateName] = Boolean(snapshot.environmentAnimationStates[stateName])
+    }
+    sharedState.environmentAnimationStates = nextEnvironmentAnimationStates
+  }
+}
+
+const normalizeEnvironmentAnimationStateSnapshot = (snapshot) => {
+  if (!snapshot || typeof snapshot !== 'object') return null
+  const normalized = {}
+  let hasKnownState = false
+  for (let index = 0; index < ENVIRONMENT_STATE_NAMES.length; index += 1) {
+    const stateName = ENVIRONMENT_STATE_NAMES[index]
+    if (stateName in snapshot) {
+      hasKnownState = true
+    }
+    normalized[stateName] = Boolean(snapshot[stateName])
+  }
+  return hasKnownState ? normalized : null
+}
+
+const syncCubeColorsFromEnvironmentState = (
+  stateSnapshot,
+  { shouldBroadcast = true } = {}
+) => {
+  applySharedStateSnapshotLocally(synchronize('sharedState'))
+  const nextEnvironmentAnimationStates = { ...sharedState.environmentAnimationStates }
+  for (let stateIndex = 0; stateIndex < ENVIRONMENT_STATE_NAMES.length; stateIndex += 1) {
+    const stateName = ENVIRONMENT_STATE_NAMES[stateIndex]
+    nextEnvironmentAnimationStates[stateName] = Boolean(stateSnapshot[stateName])
+  }
+  sharedState.environmentAnimationStates = nextEnvironmentAnimationStates
+
   for (let cubeIndex = 0; cubeIndex < ENVIRONMENT_STATE_TOGGLE_CUBE_BINDINGS.length; cubeIndex += 1) {
     const stateName = ENVIRONMENT_STATE_TOGGLE_CUBE_BINDINGS[cubeIndex]
     const stateValue = Boolean(stateSnapshot[stateName])
     if (!sharedState.cubes[cubeIndex]) continue
     sharedState.cubes[cubeIndex].color = getCubeColorForStateValue(stateValue)
   }
-  pushSharedState()
+  if (shouldBroadcast) {
+    pushSharedState()
+  }
+}
+
+const scheduleEnvironmentAnimationStateReconciliation = (
+  incomingSnapshot,
+  source = 'network-sync'
+) => {
+  const targetSnapshot = normalizeEnvironmentAnimationStateSnapshot(incomingSnapshot)
+  if (!targetSnapshot || !environmentAnimationStateController) return
+  pendingEnvironmentAnimationStateSnapshot = targetSnapshot
+  if (isReconcilingEnvironmentAnimationState) return
+
+  isReconcilingEnvironmentAnimationState = true
+  void (async () => {
+    try {
+      while (pendingEnvironmentAnimationStateSnapshot) {
+        const target = pendingEnvironmentAnimationStateSnapshot
+        pendingEnvironmentAnimationStateSnapshot = null
+        let iterationsRemaining = ENVIRONMENT_STATE_NAMES.length * 2
+        let hasDifferences = true
+
+        while (hasDifferences && iterationsRemaining > 0) {
+          iterationsRemaining -= 1
+          const current = environmentAnimationStateController.getSnapshot()
+          hasDifferences = false
+          let didApplyAnyState = false
+
+          for (let stateIndex = 0; stateIndex < ENVIRONMENT_STATE_NAMES.length; stateIndex += 1) {
+            const stateName = ENVIRONMENT_STATE_NAMES[stateIndex]
+            const desiredValue = Boolean(target[stateName])
+            if (Boolean(current[stateName]) === desiredValue) continue
+            hasDifferences = true
+            const didApply = await environmentAnimationStateController.setState(
+              stateName,
+              desiredValue,
+              { source }
+            )
+            if (didApply) {
+              didApplyAnyState = true
+            }
+          }
+
+          if (!hasDifferences || !didApplyAnyState) break
+        }
+
+        syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot(), {
+          shouldBroadcast: false,
+        })
+      }
+    } finally {
+      isReconcilingEnvironmentAnimationState = false
+      if (pendingEnvironmentAnimationStateSnapshot) {
+        scheduleEnvironmentAnimationStateReconciliation(
+          pendingEnvironmentAnimationStateSnapshot,
+          source
+        )
+      }
+    }
+  })()
 }
 
 // Spawn assignment and recenter are driven by server-authoritative player data.
@@ -653,6 +778,11 @@ renderer.setAnimationLoop(() => {
   elapsedSeconds += deltaSeconds
   const elapsedMilliseconds = elapsedSeconds * 1000
   const networkState = synchronize('sharedState') || sharedState
+  applySharedStateSnapshotLocally(networkState)
+  scheduleEnvironmentAnimationStateReconciliation(
+    networkState?.environmentAnimationStates,
+    'network-frame'
+  )
   const snapshot = getSnapshot()
   tryEnterSharedScene(snapshot)
   maybeStartLandlordIntro(snapshot)

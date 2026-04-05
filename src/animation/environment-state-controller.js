@@ -16,7 +16,14 @@ export const ENVIRONMENT_ANIMATION_STATE_CONFIG = {
         OFF: 'bed 1 close',
       },
       initialValue: false,
-      dependencies: [],
+      dependencies: [
+        {
+          type: 'exclusiveOnWith',
+          whenValue: true,
+          states: ['bed2'],
+          reason: 'only one bed can be ON at a time',
+        },
+      ],
     },
     bed2: {
       label: 'Bed 2',
@@ -26,7 +33,14 @@ export const ENVIRONMENT_ANIMATION_STATE_CONFIG = {
         OFF: 'bed 2 close',
       },
       initialValue: false,
-      dependencies: [],
+      dependencies: [
+        {
+          type: 'exclusiveOnWith',
+          whenValue: true,
+          states: ['bed1'],
+          reason: 'only one bed can be ON at a time',
+        },
+      ],
     },
     shower: {
       label: 'Shower',
@@ -54,14 +68,7 @@ export const ENVIRONMENT_ANIMATION_STATE_CONFIG = {
         OFF: 'kitchen open',
       },
       initialValue: false,
-      dependencies: [
-        {
-          type: 'exclusiveOnWith',
-          whenValue: true,
-          states: ['toilet'],
-          reason: 'toilet or kitchen can be ON at one time only',
-        },
-      ],
+      dependencies: [],
     },
     toilet: {
       label: 'Toilet',
@@ -71,14 +78,7 @@ export const ENVIRONMENT_ANIMATION_STATE_CONFIG = {
         OFF: 'toilet off',
       },
       initialValue: false,
-      dependencies: [
-        {
-          type: 'exclusiveOnWith',
-          whenValue: true,
-          states: ['kitchen'],
-          reason: 'toilet or kitchen can be ON at one time only',
-        },
-      ],
+      dependencies: [],
     },
   },
 }
@@ -110,9 +110,9 @@ export const createEnvironmentAnimationStateController = ({
     currentState[stateName] = Boolean(stateConfig.initialValue)
   }
 
-  const stopAllActions = () => {
-    for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
-      actions[actionIndex].stop()
+  const stopActions = (actionGroup) => {
+    for (let actionIndex = 0; actionIndex < actionGroup.length; actionIndex += 1) {
+      actionGroup[actionIndex].stop()
     }
   }
 
@@ -138,6 +138,23 @@ export const createEnvironmentAnimationStateController = ({
     const stateConfig = config.states[stateName]
     if (!stateConfig) return `unknown state "${stateName}"`
     const dependencies = stateConfig.dependencies || []
+    const isKitchenToiletState = stateName === 'kitchen' || stateName === 'toilet'
+
+    if (isKitchenToiletState) {
+      const kitchenIsOn = Boolean(currentState.kitchen)
+      const toiletIsOn = Boolean(currentState.toilet)
+
+      // Requested transition rules:
+      // 1) If toilet=OFF and kitchen=OFF, only kitchen can turn ON.
+      // 2) If toilet=OFF and kitchen=ON, toilet can turn ON and kitchen can turn OFF.
+      // 3) If toilet=ON and kitchen=ON, only toilet can turn OFF.
+      if (stateName === 'toilet' && nextValue === true && !toiletIsOn && !kitchenIsOn) {
+        return 'blocked by rule: with toilet OFF + kitchen OFF, only kitchen can be turned ON'
+      }
+      if (stateName === 'kitchen' && nextValue === false && toiletIsOn && kitchenIsOn) {
+        return 'blocked by rule: with toilet ON + kitchen ON, only toilet can be turned OFF'
+      }
+    }
 
     for (let dependencyIndex = 0; dependencyIndex < dependencies.length; dependencyIndex += 1) {
       const dependency = dependencies[dependencyIndex]
@@ -156,6 +173,15 @@ export const createEnvironmentAnimationStateController = ({
         for (let stateIndex = 0; stateIndex < dependency.states.length; stateIndex += 1) {
           const dependencyState = dependency.states[stateIndex]
           if (currentState[dependencyState]) {
+            return dependency.reason
+          }
+        }
+      }
+
+      if (dependency.type === 'requiresStatesOn') {
+        for (let stateIndex = 0; stateIndex < dependency.states.length; stateIndex += 1) {
+          const dependencyState = dependency.states[stateIndex]
+          if (!currentState[dependencyState]) {
             return dependency.reason
           }
         }
@@ -245,7 +271,10 @@ export const createEnvironmentAnimationStateController = ({
       return false
     }
 
-    stopAllActions()
+    // Important: do not stop unrelated actions here.
+    // Stopping all actions clears clamped end poses from other ON states
+    // (e.g. kitchen snapping OFF when toilet turns ON).
+    stopActions(actionsForState)
     const playDirection = normalizedValue ? 'forward' : 'reverse'
     for (let actionIndex = 0; actionIndex < actionsForState.length; actionIndex += 1) {
       const action = actionsForState[actionIndex]
