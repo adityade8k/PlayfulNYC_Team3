@@ -58,6 +58,7 @@ export const createLandlordCallController = (
   let primed = false
   let audioUnlocked = false
   let activeObjectUrl = null
+  let activeCallKind = 'intro'
 
   const logAudio = (message, extra = null) => {
     if (extra) {
@@ -91,6 +92,10 @@ export const createLandlordCallController = (
     logAudio('landlord call finished, switching to stats')
     store.setCallState({ speaking: false, finished: true })
     store.setScreen('stats')
+    if (activeCallKind === 'outcome') {
+      onStatus('Landlord outcome call finished.')
+      return
+    }
     onStatus('Landlord call finished.')
     onStatus('Landlord intro finished. Stats screen is live.')
     onFinished()
@@ -163,7 +168,7 @@ export const createLandlordCallController = (
       })
   }
 
-  const playFromCurrentSource = async () => {
+  const playFromCurrentSource = async ({ screen = 'incoming-call' } = {}) => {
     clearTimer()
     if (startPromise) return startPromise
     audio.pause()
@@ -174,7 +179,7 @@ export const createLandlordCallController = (
       networkState: audio.networkState,
     })
 
-    store.setScreen('incoming-call')
+    store.setScreen(screen)
     store.setCallState({
       started: true,
       audioReady: false,
@@ -240,13 +245,15 @@ export const createLandlordCallController = (
   }
 
   const startCall = async () => {
+    activeCallKind = 'intro'
     primeAudio()
     revokeObjectUrl()
     setAudioSource(endpoint)
-    return playFromCurrentSource()
+    return playFromCurrentSource({ screen: 'incoming-call' })
   }
 
   const startOutcomeCall = async (payload = {}) => {
+    activeCallKind = 'outcome'
     clearTimer()
     revokeObjectUrl()
     let response
@@ -317,7 +324,7 @@ export const createLandlordCallController = (
 
     activeObjectUrl = URL.createObjectURL(normalizedBlob)
     setAudioSource(activeObjectUrl)
-    return playFromCurrentSource()
+    return playFromCurrentSource({ screen: 'stats' })
   }
 
   return {
@@ -407,8 +414,12 @@ const drawIncomingCall = (context, state, elapsedMs) => {
 
 const drawStats = (context, state) => {
   const columns = [86, 530]
-  const startY = 286
-  const rowHeight = 194
+  const hasSessionSummary = Boolean(state.sessionSummary)
+  const summaryBottomY = hasSessionSummary
+    ? drawTeamSummary(context, state.sessionSummary)
+    : 0
+  const startY = hasSessionSummary ? summaryBottomY + 82 : 286
+  const rowHeight = 184
   const barWidth = 308
   const barHeight = 54
   context.textAlign = 'left'
@@ -448,6 +459,65 @@ const drawStats = (context, state) => {
     roundRect(context, x + 101, y + 45, fillWidth, barHeight - 10, 19)
     context.fill()
   })
+}
+
+const drawTeamSummary = (context, sessionSummary) => {
+  const x = 78
+  const y = 198
+  const width = 868
+  const height = 164
+  const teamScoreLabel =
+    Number.isFinite(sessionSummary?.teamScore) ? `${sessionSummary.teamScore}%` : '--'
+  const stars = Math.max(
+    0,
+    Math.min(3, Number.isFinite(sessionSummary?.teamStars) ? sessionSummary.teamStars : 0)
+  )
+  const tenantLines = Array.isArray(sessionSummary?.summaries)
+    ? sessionSummary.summaries
+        .slice(0, 2)
+        .map((summary, index) =>
+          `${formatTenantLabel(summary.playerId, index)}: ${summary.overallScore}%`
+        )
+    : []
+
+  context.fillStyle = 'rgba(7, 27, 33, 0.32)'
+  roundRect(context, x, y, width, height, 28)
+  context.fill()
+
+  context.fillStyle = 'rgba(255,255,255,0.95)'
+  context.font = '700 34px "Avenir Next", sans-serif'
+  context.fillText('Tenant Review', x + 34, y + 50)
+  context.font = '900 66px "Avenir Next", sans-serif'
+  context.fillText(teamScoreLabel, x + 32, y + 122)
+
+  context.textAlign = 'right'
+  context.font = '700 30px "Avenir Next", sans-serif'
+  context.fillStyle = 'rgba(255,255,255,0.9)'
+  context.fillText(starsToText(stars), x + width - 30, y + 50)
+
+  if (tenantLines.length > 0) {
+    context.font = '600 24px "Avenir Next", sans-serif'
+    context.fillStyle = 'rgba(255,255,255,0.84)'
+    context.fillText(tenantLines[0], x + width - 30, y + 94)
+    if (tenantLines[1]) {
+      context.fillText(tenantLines[1], x + width - 30, y + 128)
+    }
+  }
+
+  context.textAlign = 'left'
+  return y + height
+}
+
+const starsToText = (stars) => {
+  const full = '\u2605'.repeat(stars)
+  const empty = '\u2606'.repeat(Math.max(0, 3 - stars))
+  return `${full}${empty}`
+}
+
+const formatTenantLabel = (playerId, fallbackIndex = 0) => {
+  const match = String(playerId || '').match(/(\d+)/)
+  const tenantNumber = Number(match?.[1] || fallbackIndex + 1)
+  return `Tenant ${Math.max(1, tenantNumber)}`
 }
 
 const getNeedColor = (value) => {

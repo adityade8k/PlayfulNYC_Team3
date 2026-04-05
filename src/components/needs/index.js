@@ -9,7 +9,7 @@
 // Tweak DECAY_RATES and FILL_RATES to change game feel.
 
 export const NEEDS_CONFIG = {
-  gameDuration: 240,        // seconds (default 60s; change freely)
+  gameDuration: 30,        // seconds (default 60s; change freely)
   // Optional watch start hour (24h format). The watch advances
   // through a full 24-hour cycle over gameDuration.
   watchStartHour24: 8,
