@@ -21,6 +21,10 @@ import {
   PLAYER_SPAWN_POINTS,
   createDefaultSharedState,
 } from '../shared/default-state.js'
+import {
+  ENVIRONMENT_ANIMATION_STATE_CONFIG,
+  createEnvironmentAnimationStateController,
+} from './animation/environment-state-controller.js'
 import { PlayerNeedsSession } from './components/needs/index.js'
 import { ZoneSystem } from './components/needs/zones.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
@@ -34,6 +38,13 @@ const getNeedsPlayerIdForSnapshot = (snapshot) => {
 }
 
 const sharedState = createDefaultSharedState()
+const ENVIRONMENT_STATE_TOGGLE_CUBE_BINDINGS = [
+  'bed1',
+  'bed2',
+  'shower',
+  'kitchen',
+  'toilet',
+]
 
 setGlobal('sharedState', sharedState)
 connectMultiplayer()
@@ -82,6 +93,11 @@ const environmentModelTransform = {
   scale: [0.852, 0.852, 0.852],
 }
 
+let environmentAnimationMixer = null
+const environmentAnimationActions = []
+let environmentAnimationStateController = null
+const ENABLE_ENVIRONMENT_ANIMATION_TEST = false
+
 const gltfLoader = new GLTFLoader()
 void gltfLoader
   .loadAsync(environmentModelUrl)
@@ -91,6 +107,56 @@ void gltfLoader
     environmentModel.rotation.fromArray(environmentModelTransform.rotation)
     environmentModel.scale.fromArray(environmentModelTransform.scale)
     sharedSceneGroup.add(environmentModel)
+
+    if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
+      console.log(
+        '[environment] animations found:',
+        gltf.animations.map((clip, index) => `${index + 1}. ${clip.name || `Animation_${index}`}`)
+      )
+
+      environmentAnimationMixer = new THREE.AnimationMixer(environmentModel)
+      for (let clipIndex = 0; clipIndex < gltf.animations.length; clipIndex += 1) {
+        const clip = gltf.animations[clipIndex]
+        const action = environmentAnimationMixer.clipAction(clip)
+        action.setLoop(THREE.LoopOnce, 1)
+        action.clampWhenFinished = true
+        action.enabled = false
+        action.stop()
+        environmentAnimationActions.push(action)
+      }
+      environmentAnimationStateController = createEnvironmentAnimationStateController({
+        config: ENVIRONMENT_ANIMATION_STATE_CONFIG,
+        mixer: environmentAnimationMixer,
+        actions: environmentAnimationActions,
+      })
+      console.log('[environment] state-controller ready', environmentAnimationStateController.getSnapshot())
+      syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot())
+
+      // Handy manual hooks while debugging in devtools.
+      window.setEnvironmentState = (stateName, value) =>
+        environmentAnimationStateController.setState(stateName, value, {
+          source: 'window.setEnvironmentState',
+        }).then((didApply) => {
+          if (!didApply) return didApply
+          syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot())
+          return didApply
+        })
+      window.getEnvironmentAnimationState = () => environmentAnimationStateController.getSnapshot()
+      window.runEnvironmentAnimationTest = () =>
+        environmentAnimationStateController.runSequentialDebugTest().then(() => {
+          syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot())
+        })
+
+      if (ENABLE_ENVIRONMENT_ANIMATION_TEST) {
+        void environmentAnimationStateController.runSequentialDebugTest().then(() => {
+          syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot())
+        })
+      } else {
+        console.log('[environment] animation autoplay disabled; all states start OFF until triggered')
+      }
+    } else {
+      console.log('[environment] no animations found in loaded model')
+    }
   })
   .catch((error) => {
     console.error('[environment] failed to load model', error)
@@ -236,10 +302,7 @@ const maybeStartLandlordIntro = (snapshot) => {
 
 const activeSources = new Set()
 const lastHoveredCubeBySource = new Map()
-const randomHexColor = () =>
-  `#${Math.floor(Math.random() * 0xffffff)
-    .toString(16)
-    .padStart(6, '0')}`
+const getCubeColorForStateValue = (isOn) => (isOn ? 'green' : 'red')
 let isInAr = false
 const localHeadPosition = new THREE.Vector3()
 const localBodyPosition = new THREE.Vector3()
@@ -263,6 +326,16 @@ let introFallbackDeadlineAt = null
 const pushSharedState = () => {
   setGlobal('sharedState', sharedState)
   broadcastGlobal('sharedState', sharedState)
+}
+
+const syncCubeColorsFromEnvironmentState = (stateSnapshot) => {
+  for (let cubeIndex = 0; cubeIndex < ENVIRONMENT_STATE_TOGGLE_CUBE_BINDINGS.length; cubeIndex += 1) {
+    const stateName = ENVIRONMENT_STATE_TOGGLE_CUBE_BINDINGS[cubeIndex]
+    const stateValue = Boolean(stateSnapshot[stateName])
+    if (!sharedState.cubes[cubeIndex]) continue
+    sharedState.cubes[cubeIndex].color = getCubeColorForStateValue(stateValue)
+  }
+  pushSharedState()
 }
 
 // Spawn assignment and recenter are driven by server-authoritative player data.
@@ -366,10 +439,28 @@ const onRelease = (sourceId, detail = {}) => {
   lastHoveredCubeBySource.delete(sourceId)
   if (hitCubeIndex === null) return
   if (!sharedState.cubes[hitCubeIndex]) return
+  const stateName = ENVIRONMENT_STATE_TOGGLE_CUBE_BINDINGS[hitCubeIndex]
+  if (!stateName) {
+    console.warn(`[environment-toggle] cube index ${hitCubeIndex} has no state binding`)
+    return
+  }
+  if (!environmentAnimationStateController) {
+    console.warn(
+      `[environment-toggle] state controller not ready; ignoring toggle for "${stateName}"`
+    )
+    return
+  }
 
-  // Only recolor when release happens while the ray/pinch is pointing at a cube.
-  sharedState.cubes[hitCubeIndex].color = randomHexColor()
-  pushSharedState()
+  const currentSnapshot = environmentAnimationStateController.getSnapshot()
+  const nextValue = !Boolean(currentSnapshot[stateName])
+  void environmentAnimationStateController
+    .setState(stateName, nextValue, {
+      source: `cube-toggle:${stateName}`,
+    })
+    .then((didApply) => {
+      if (!didApply) return
+      syncCubeColorsFromEnvironmentState(environmentAnimationStateController.getSnapshot())
+    })
 }
 
 const initializeLocalBodyFromHead = () => {
@@ -478,6 +569,9 @@ const timer = new THREE.Timer()
 renderer.setAnimationLoop(() => {
   timer.update()
   const deltaSeconds = timer.getDelta()
+  if (environmentAnimationMixer) {
+    environmentAnimationMixer.update(deltaSeconds)
+  }
   elapsedSeconds += deltaSeconds
   const elapsedMilliseconds = elapsedSeconds * 1000
   const networkState = synchronize('sharedState') || sharedState
