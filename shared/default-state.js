@@ -6,6 +6,13 @@ export const DEFAULT_SHARED_STATE = {
     { color: 'red', position: [0.36, 0.9, -0.5] },
     { color: 'red', position: [0.72, 0.9, -0.5] },
   ],
+  environmentAnimationStates: {
+    bed1: false,
+    bed2: false,
+    shower: false,
+    kitchen: false,
+    toilet: false,
+  },
 }
 
 // Canonical shared floor plane. Calibration maps real floor to this Y.
@@ -23,4 +30,7 @@ export const createDefaultSharedState = () => ({
     color: cube.color,
     position: [...cube.position],
   })),
+  environmentAnimationStates: {
+    ...DEFAULT_SHARED_STATE.environmentAnimationStates,
+  },
 })
