@@ -22,18 +22,15 @@ import {
   createDefaultSharedState,
 } from '../shared/default-state.js'
 import {
-<<<<<<< HEAD
   NEEDS_CONFIG,
   PlayerNeedsSession,
   getSessionCompletionPercent,
   getWatchClockFromElapsed,
 } from './components/needs/index.js'
-=======
+import {
   ENVIRONMENT_ANIMATION_STATE_CONFIG,
   createEnvironmentAnimationStateController,
 } from './animation/environment-state-controller.js'
-import { PlayerNeedsSession } from './components/needs/index.js'
->>>>>>> master
 import { ZoneSystem } from './components/needs/zones.js'
 import { InteractionSystem } from './components/needs/interactions.js'
 import { CalibrationState, createCalibrationSystem } from './xr/calibration.js'
