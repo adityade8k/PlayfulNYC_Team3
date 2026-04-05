@@ -256,34 +256,48 @@ const NIGHT_COMPLETION_PERCENT =
 const NEXT_MORNING_COMPLETION_PERCENT =
   Number(NEEDS_CONFIG.sessionMilestones?.nextMorningCompletionPercent) || 90
 const SKIP_INTRO_CALL_AND_SHOW_STATS = Boolean(GAME_CONFIG.round?.skipIntroCallAndShowStats)
-const nightAudio = new Audio('/sounds/cricket.mp3')
-nightAudio.preload = 'auto'
-const nextMorningAudio = new Audio('/sounds/bird.mp3')
-nextMorningAudio.preload = 'auto'
+const SOUND_BASE_PATH = `${import.meta.env.BASE_URL}sounds`
+const createGameAudio = (fileName, label) => {
+  const audio = new Audio(`${SOUND_BASE_PATH}/${fileName}`)
+  audio.preload = 'auto'
+  audio.loop = false
+  audio.volume = 1
+  audio.muted = false
+  audio.dataset.audioLabel = label
+  audio.addEventListener('error', () => {
+    const source = audio.currentSrc || audio.src || '(no-src)'
+    console.warn(`[audio] media error for "${label}" from ${source}`, audio.error)
+  })
+  return audio
+}
+const describeAudio = (audio) => {
+  if (!audio) return 'unknown'
+  return audio.dataset.audioLabel || audio.currentSrc || audio.src || 'unknown'
+}
+const nightAudio = createGameAudio('cricket.mp3', 'milestone:night')
+const nextMorningAudio = createGameAudio('bird.mp3', 'milestone:next-morning')
 const interactionLoopAudioByType = {
-  hunger: new Audio('/kitchen.mp3'),
-  poop: new Audio('/poop.mp3'),
-  shower: new Audio('/shower.mp3'),
-  sleep: new Audio('/snore.mp3'),
-  fun: new Audio('/game.mp3'),
+  hunger: createGameAudio('kitchen.mp3', 'interaction-loop:hunger'),
+  poop: createGameAudio('poop.mp3', 'interaction-loop:poop'),
+  shower: createGameAudio('shower.mp3', 'interaction-loop:shower'),
+  sleep: createGameAudio('snore.mp3', 'interaction-loop:sleep'),
+  fun: createGameAudio('game.mp3', 'interaction-loop:fun'),
 }
 const interactionOneShotAudio = {
-  drawer: new Audio('/drawer.mp3'),
-  curtain: new Audio('/curtain.mp3'),
+  drawer: createGameAudio('drawer.mp3', 'interaction-one-shot:drawer'),
+  curtain: createGameAudio('curtain.mp3', 'interaction-one-shot:curtain'),
 }
 const interactionSequenceByType = {
-  hunger: ['drawer'],
+  hunger: [],
   poop: [],
   sleep: [],
-  shower: ['drawer', 'curtain'],
+  shower: [],
   fun: [],
 }
 for (const audio of Object.values(interactionLoopAudioByType)) {
-  audio.preload = 'auto'
   audio.loop = true
 }
 for (const audio of Object.values(interactionOneShotAudio)) {
-  audio.preload = 'auto'
   audio.loop = false
 }
 let currentInteractionType = null
@@ -622,12 +636,9 @@ const initializeLocalBodyFromHead = () => {
 }
 
 const playMilestoneSound = async (audio) => {
-  try {
-    audio.currentTime = 0
-    await audio.play()
-  } catch {
-    // Ignore blocked autoplay in headset browser.
-  }
+  if (!audio) return
+  audio.currentTime = 0
+  await playAudioWithRetry(audio)
 }
 
 const stopInteractionAudio = () => {
@@ -645,9 +656,14 @@ const stopInteractionAudio = () => {
 
 const playAudioWithRetry = async (audio) => {
   if (!audio) return
+  const label = describeAudio(audio)
+  const source = audio.currentSrc || audio.src || '(no-src)'
+  console.log(`[audio] attempting play "${label}" from ${source}`)
   try {
     await audio.play()
-  } catch {
+    console.log(`[audio] play started "${label}"`)
+  } catch (error) {
+    console.warn(`[audio] play blocked/failed "${label}"`, error)
     // Ignore blocked autoplay in headset browser.
   }
 }
