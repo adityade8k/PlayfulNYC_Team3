@@ -262,22 +262,22 @@ const nightAudio = new Audio('/sounds/cricket.mp3')
 nightAudio.preload = 'auto'
 const nextMorningAudio = new Audio('/sounds/bird.mp3')
 nextMorningAudio.preload = 'auto'
-const interactionLoopAudioByType = {
-  hunger: new Audio('/sounds/kitchen.mp3'),
-  poop: new Audio('/sounds/poop.mp3'),
-  shower: new Audio('/sounds/shower.mp3'),
-  sleep: new Audio('/sounds/snore.mp3'),
-  fun: new Audio('/sounds/game.mp3'),
+const interactionSoundPathByType = {
+  hunger: '/sounds/kitchen.mp3',
+  poop: '/sounds/poop.mp3',
+  shower: '/sounds/shower.mp3',
+  sleep: '/sounds/snore.mp3',
+  fun: '/sounds/game.mp3',
 }
-const interactionOneShotAudio = {
-  drawer: new Audio('/sounds/drawer.mp3'),
-  curtain: new Audio('/sounds/curtain.mp3'),
-}
+const interactionLoopAudioByType = Object.fromEntries(
+  Object.entries(interactionSoundPathByType).map(([type, path]) => [type, new Audio(path)])
+)
+const interactionOneShotAudio = {}
 const interactionSequenceByType = {
-  hunger: ['drawer'],
+  hunger: [],
   poop: [],
+  shower: [],
   sleep: [],
-  shower: ['drawer', 'curtain'],
   fun: [],
 }
 for (const audio of Object.values(interactionLoopAudioByType)) {
@@ -734,16 +734,8 @@ const stopInteractionAudioForInactiveState = (activeTypeOrNull) => {
 }
 
 const mapNeedToInteractionType = (needId) => {
-  if (
-    needId === 'hunger' ||
-    needId === 'poop' ||
-    needId === 'sleep' ||
-    needId === 'shower' ||
-    needId === 'fun'
-  ) {
-    return needId
-  }
-  return null
+  if (!needId) return null
+  return interactionSoundPathByType[needId] ? needId : null
 }
 
 const setRoundPhase = (nextPhase, snapshot, { needsSummary = undefined } = {}) => {
